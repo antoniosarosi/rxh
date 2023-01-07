@@ -11,6 +11,52 @@ use hyper::{
 /// the client.
 pub(crate) type BoxBodyResponse = Response<BoxBody<Bytes, hyper::Error>>;
 
+/// Response sent back to the client at the end of the proxying process. It
+/// wraps the response received by the target server and when necessary we can
+/// call [`ProxyResponse::into_forwarded`] to obtain the final response.
+pub(crate) struct ProxyResponse<T> {
+    /// Original response received from a server behind this proxy.
+    response: Response<T>,
+}
+
+impl<T> ProxyResponse<T> {
+    /// Creates a new [`ProxyResponse`], wrapping the original response.
+    pub fn new(response: Response<T>) -> Self {
+        Self { response }
+    }
+
+    /// Consumes this [`ProxyResponse`] and returns the final response that
+    /// should be sent to the client.
+    pub fn into_forwarded(mut self) -> Response<T> {
+        self.response.headers_mut().insert(
+            header::SERVER,
+            HeaderValue::from_str(rxh_server_header().as_str()).unwrap(),
+        );
+
+        self.response
+    }
+}
+
+/// HTTP response originated on this server, not obtained through a proxy
+/// process.
+pub(crate) struct LocalResponse;
+
+impl LocalResponse {
+    /// Response builder pre-initialized with our header values.
+    pub fn builder() -> http::response::Builder {
+        Response::builder().header(header::SERVER, rxh_server_header())
+    }
+
+    /// Generic `HTTP 404 Not Found` response.
+    pub fn not_found() -> BoxBodyResponse {
+        Self::builder()
+            .status(http::StatusCode::NOT_FOUND)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(body::full("HTTP 404 NOT FOUND"))
+            .unwrap()
+    }
+}
+
 /// Let everybody know who is running this server ;)
 ///
 /// ```http
@@ -25,31 +71,6 @@ pub(crate) type BoxBodyResponse = Response<BoxBody<Bytes, hyper::Error>>;
 #[inline]
 pub(crate) fn rxh_server_header() -> String {
     format!("rxh/{}", crate::VERSION)
-}
-
-/// Response builder initialized with our server header value.
-fn builder() -> http::response::Builder {
-    Response::builder().header(header::SERVER, rxh_server_header())
-}
-
-/// Generic `HTTP 404 Not Found` response.
-pub(crate) fn not_found() -> BoxBodyResponse {
-    builder()
-        .status(http::StatusCode::NOT_FOUND)
-        .header(header::CONTENT_TYPE, "text/plain")
-        .body(body::full("HTTP 404 NOT FOUND"))
-        .unwrap()
-}
-
-/// Adds RXH metadata to the response. For now, we only change the `Server`
-/// header.
-pub(crate) fn annotate<T>(mut response: Response<T>) -> Response<T> {
-    response.headers_mut().insert(
-        header::SERVER,
-        HeaderValue::from_str(rxh_server_header().as_str()).unwrap(),
-    );
-
-    response
 }
 
 mod body {

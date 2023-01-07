@@ -1,11 +1,14 @@
 use std::{future::Future, net::SocketAddr, pin::Pin};
 
-use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt};
-use hyper::{body::Incoming, service::Service, Request, Response};
+use http_body_util::BodyExt;
+use hyper::{body::Incoming, service::Service, Request};
 use tokio::net::TcpStream;
 
-use crate::{config::Config, request::ProxyRequest, response};
+use crate::{
+    config::Config,
+    request::ProxyRequest,
+    response::{BoxBodyResponse, LocalResponse, ProxyResponse},
+};
 
 /// Proxy service. Handles incoming requests from clients and responses from
 /// target servers.
@@ -27,11 +30,11 @@ impl Proxy {
     }
 
     /// Forwards the request to the target server and returns the response sent
-    /// by the target server.
+    /// by the target server. See [`ProxyRequest`] and [`ProxyResponse`].
     pub async fn forward(
         request: ProxyRequest<Incoming>,
         to: SocketAddr,
-    ) -> Result<response::BoxBodyResponse, hyper::Error> {
+    ) -> Result<BoxBodyResponse, hyper::Error> {
         let stream = TcpStream::connect(to).await.unwrap();
 
         let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
@@ -48,12 +51,12 @@ impl Proxy {
 
         let response = sender.send_request(request.into_forwarded()).await?;
 
-        Ok(response::annotate(response.map(|body| body.boxed())))
+        Ok(ProxyResponse::new(response.map(|body| body.boxed())).into_forwarded())
     }
 }
 
 impl Service<Request<Incoming>> for Proxy {
-    type Response = Response<BoxBody<Bytes, hyper::Error>>;
+    type Response = BoxBodyResponse;
 
     type Error = hyper::Error;
 
@@ -68,7 +71,7 @@ impl Service<Request<Incoming>> for Proxy {
 
         Box::pin(async move {
             if !request.uri().to_string().starts_with(&config.prefix) {
-                Ok(response::not_found())
+                Ok(LocalResponse::not_found())
             } else {
                 let request = ProxyRequest::new(request, client_addr, server_addr);
                 Proxy::forward(request, config.target).await
