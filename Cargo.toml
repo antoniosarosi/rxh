@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-hyper = { version = "1.0.0-rc.1", features = ["full"] }
-http-body-util = "0.1.0-rc.1"
+hyper = { version = "1.0.0-rc.2", features = ["full"] }
+http-body-util = "0.1.0-rc.2"
 bytes = "1"
 http = "0.2"
 serde = { version = "1.0", features = ["derive"] }
