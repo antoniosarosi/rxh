@@ -5,25 +5,31 @@ use http_body_util::{combinators::BoxBody, BodyExt};
 use hyper::{body::Incoming, service::Service, Request, Response};
 use tokio::net::TcpStream;
 
-use crate::{config::Config, response};
+use crate::{config::Config, request::ProxyRequest, response};
 
 /// Proxy service. Handles incoming requests from clients and responses from
 /// target servers.
 pub(crate) struct Proxy {
     /// Reference to global config.
     config: &'static Config,
+    client_addr: SocketAddr,
+    server_addr: SocketAddr,
 }
 
 impl Proxy {
     /// Creates a new [`Proxy`].
-    pub fn new(config: &'static Config) -> Self {
-        Self { config }
+    pub fn new(config: &'static Config, client_addr: SocketAddr, server_addr: SocketAddr) -> Self {
+        Self {
+            config,
+            client_addr,
+            server_addr,
+        }
     }
 
-    /// Forwards the request the target server and returns the response sent
+    /// Forwards the request to the target server and returns the response sent
     /// by the target server.
     pub async fn forward(
-        request: Request<Incoming>,
+        request: ProxyRequest<Incoming>,
         to: SocketAddr,
     ) -> Result<response::BoxBodyResponse, hyper::Error> {
         let stream = TcpStream::connect(to).await.unwrap();
@@ -40,7 +46,7 @@ impl Proxy {
             }
         });
 
-        let response = sender.send_request(request).await?;
+        let response = sender.send_request(request.into_forwarded()).await?;
 
         Ok(response::annotate(response.map(|body| body.boxed())))
     }
@@ -54,11 +60,17 @@ impl Service<Request<Incoming>> for Proxy {
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&mut self, request: Request<Incoming>) -> Self::Future {
-        let config = self.config;
+        let Proxy {
+            config,
+            client_addr,
+            server_addr,
+        } = *self;
+
         Box::pin(async move {
             if !request.uri().to_string().starts_with(&config.prefix) {
                 Ok(response::not_found())
             } else {
+                let request = ProxyRequest::new(request, client_addr, server_addr);
                 Proxy::forward(request, config.target).await
             }
         })
