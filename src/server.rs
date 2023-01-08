@@ -23,8 +23,8 @@ impl<C> Server<C> {
     where
         C: ConfigRef + Copy + Send + 'static,
     {
-        let config_ref = self.config;
-        let Config { listen, .. } = config_ref.get();
+        let Self { config } = *self;
+        let Config { listen, .. } = config.get();
         let listener = TcpListener::bind(listen).await?;
         println!("Listening on http://{}", listen);
 
@@ -37,7 +37,7 @@ impl<C> Server<C> {
                 if let Err(err) = hyper::server::conn::http1::Builder::new()
                     .preserve_header_case(true)
                     .title_case_headers(true)
-                    .serve_connection(stream, Proxy::new(config_ref, client_addr, server_addr))
+                    .serve_connection(stream, Proxy::new(config, client_addr, server_addr))
                     .with_upgrades()
                     .await
                 {
