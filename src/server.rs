@@ -1,32 +1,25 @@
 use tokio::net::TcpListener;
 
-use crate::{
-    config::{Config, ConfigRef},
-    proxy::Proxy,
-};
+use crate::{config::Config, proxy::Proxy};
 
 /// TCP listener. Accepts new connections and spawns tasks to handle them.
-pub(crate) struct Server<C> {
+pub struct Server {
     /// Reference to global config.
-    config: C,
+    config: &'static Config,
 }
 
-impl<C> Server<C> {
+impl Server {
     /// Creates a new [`Server`].
-    pub fn new(config: C) -> Self {
+    pub fn new(config: &'static Config) -> Self {
         Self { config }
     }
 
     /// Starts listening for incoming connections on the address specified by
     /// [`self.config.listen`].
-    pub async fn listen(&self) -> Result<(), Box<dyn std::error::Error>>
-    where
-        C: ConfigRef + Copy + Send + 'static,
-    {
+    pub async fn listen(&self) -> Result<(), Box<dyn std::error::Error>> {
         let Self { config } = *self;
-        let Config { listen, .. } = config.get();
-        let listener = TcpListener::bind(listen).await?;
-        println!("Listening on http://{}", listen);
+        let listener = TcpListener::bind(config.listen).await?;
+        println!("Listening on http://{}", config.listen);
 
         loop {
             let (stream, client_addr) = listener.accept().await?;

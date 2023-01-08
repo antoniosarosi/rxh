@@ -5,23 +5,23 @@ use hyper::{body::Incoming, service::Service, Request};
 use tokio::net::TcpStream;
 
 use crate::{
-    config::{Config, ConfigRef},
+    config::Config,
     request::ProxyRequest,
     response::{BoxBodyResponse, LocalResponse, ProxyResponse},
 };
 
 /// Proxy service. Handles incoming requests from clients and responses from
 /// target servers.
-pub(crate) struct Proxy<C> {
+pub(crate) struct Proxy {
     /// Reference to global config.
-    config: C,
+    config: &'static Config,
     client_addr: SocketAddr,
     server_addr: SocketAddr,
 }
 
-impl<C> Proxy<C> {
+impl Proxy {
     /// Creates a new [`Proxy`].
-    pub fn new(config: C, client_addr: SocketAddr, server_addr: SocketAddr) -> Self {
+    pub fn new(config: &'static Config, client_addr: SocketAddr, server_addr: SocketAddr) -> Self {
         Self {
             config,
             client_addr,
@@ -55,10 +55,7 @@ async fn proxy_forward(
     Ok(ProxyResponse::new(response.map(|body| body.boxed())).into_forwarded())
 }
 
-impl<C> Service<Request<Incoming>> for Proxy<C>
-where
-    C: ConfigRef + Send + Copy + 'static,
-{
+impl Service<Request<Incoming>> for Proxy {
     type Response = BoxBodyResponse;
 
     type Error = hyper::Error;
@@ -73,13 +70,11 @@ where
         } = *self;
 
         Box::pin(async move {
-            let Config { prefix, target, .. } = config.get();
-
-            if !request.uri().to_string().starts_with(prefix) {
+            if !request.uri().to_string().starts_with(&config.prefix) {
                 Ok(LocalResponse::not_found())
             } else {
                 let request = ProxyRequest::new(request, client_addr, server_addr);
-                proxy_forward(request, *target).await
+                proxy_forward(request, config.target).await
             }
         })
     }
