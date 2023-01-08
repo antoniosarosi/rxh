@@ -1,25 +1,32 @@
 use tokio::net::TcpListener;
 
-use crate::{config::Config, proxy::Proxy};
+use crate::{
+    config::{Config, ConfigRef},
+    proxy::Proxy,
+};
 
 /// TCP listener. Accepts new connections and spawns tasks to handle them.
-pub(crate) struct Server {
+pub(crate) struct Server<C> {
     /// Reference to global config.
-    config: &'static Config,
+    config: C,
 }
 
-impl Server {
+impl<C> Server<C> {
     /// Creates a new [`Server`].
-    pub fn new(config: &'static Config) -> Self {
+    pub fn new(config: C) -> Self {
         Self { config }
     }
 
     /// Starts listening for incoming connections on the address specified by
     /// [`self.config.listen`].
-    pub async fn listen(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let listener = TcpListener::bind(self.config.listen).await?;
-        println!("Listening on http://{}", self.config.listen);
-        let config = self.config;
+    pub async fn listen(&self) -> Result<(), Box<dyn std::error::Error>>
+    where
+        C: ConfigRef + Copy + Send + 'static,
+    {
+        let config_ref = self.config;
+        let Config { listen, .. } = config_ref.get();
+        let listener = TcpListener::bind(listen).await?;
+        println!("Listening on http://{}", listen);
 
         loop {
             let (stream, client_addr) = listener.accept().await?;
@@ -30,7 +37,7 @@ impl Server {
                 if let Err(err) = hyper::server::conn::http1::Builder::new()
                     .preserve_header_case(true)
                     .title_case_headers(true)
-                    .serve_connection(stream, Proxy::new(config, client_addr, server_addr))
+                    .serve_connection(stream, Proxy::new(config_ref, client_addr, server_addr))
                     .with_upgrades()
                     .await
                 {
