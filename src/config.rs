@@ -17,6 +17,16 @@ pub struct Config {
     pub prefix: String,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            target: "0.0.0.0:8080".parse().unwrap(),
+            listen: "0.0.0.0:8100".parse().unwrap(),
+            prefix: default::prefix(),
+        }
+    }
+}
+
 mod default {
     ///! Default values for some configuration options.
 

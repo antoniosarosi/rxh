@@ -1,0 +1,101 @@
+use std::{convert::Infallible, net::SocketAddr};
+
+use bytes::Bytes;
+use http_body_util::BodyExt;
+use hyper::{body::Incoming, service::Service, Request, Response};
+use tokio::{self, net::TcpSocket, task::JoinHandle};
+
+use super::{
+    service::{serve_connection, AsyncBody},
+    tcp::{ping_tcp_server, usable_socket, usable_tcp_listener},
+};
+
+/// Starts a backend server in the background with a customizable request
+/// handler.
+pub fn spawn_backend_server<S, B>(service: S) -> (SocketAddr, JoinHandle<()>)
+where
+    S: Service<Request<Incoming>, Response = Response<B>, Error = Infallible, Future: Send>
+        + Send
+        + Copy
+        + 'static,
+    B: AsyncBody,
+{
+    let (listener, addr) = usable_tcp_listener();
+
+    let handle = tokio::task::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_connection(stream, service).await;
+        }
+    });
+
+    (addr, handle)
+}
+
+/// Starts an RXH reverse proxy server in the background with the given config.
+pub fn spawn_reverse_proxy(config: rxh::Config) -> (SocketAddr, JoinHandle<()>) {
+    // TODO: Replace CTRL-C with something we can actually controll.
+    let (addr, listener) = rxh::server::init(config, tokio::signal::ctrl_c()).unwrap();
+
+    let handle = tokio::task::spawn(async {
+        listener.await.unwrap();
+    });
+
+    (addr, handle)
+}
+
+/// Opens a socket and binds it to `from` address before sending an HTTP request
+/// to `to` address. When the response is completely received including the
+/// whole body, its parts are returned.
+pub async fn send_http_request_from<B>(
+    from: TcpSocket,
+    to: SocketAddr,
+    req: Request<B>,
+) -> (http::response::Parts, Bytes)
+where
+    B: AsyncBody,
+{
+    let stream = from.connect(to).await.unwrap();
+
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(stream).await.unwrap();
+    tokio::task::spawn(async move { conn.await.unwrap() });
+
+    let (parts, body) = sender.send_request(req).await.unwrap().into_parts();
+
+    (parts, body.collect().await.unwrap().to_bytes())
+}
+
+pub async fn send_http_request<B>(to: SocketAddr, req: Request<B>) -> (http::response::Parts, Bytes)
+where
+    B: AsyncBody,
+{
+    send_http_request_from(usable_socket().0, to, req).await
+}
+
+/// Same as [`send_http_request`] but from another task. This allows the
+/// current task to continue execution.
+pub fn spawn_client<B>(target: SocketAddr, req: Request<B>) -> (SocketAddr, JoinHandle<()>)
+where
+    B: AsyncBody,
+{
+    let (socket, addr) = usable_socket();
+
+    let handle = tokio::task::spawn(async move {
+        ping_tcp_server(target).await;
+        send_http_request_from(socket, target, req).await;
+    });
+
+    (addr, handle)
+}
+
+pub mod request {
+    //! Quick request factory.
+
+    use bytes::Bytes;
+    use http_body_util::Empty;
+    use hyper::Request;
+
+    pub fn empty() -> Request<Empty<Bytes>> {
+        Request::builder().body(Empty::<Bytes>::new()).unwrap()
+    }
+}

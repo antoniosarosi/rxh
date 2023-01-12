@@ -1,15 +1,54 @@
-use std::{future::Future, ptr};
+use std::{future::Future, io, net::SocketAddr, ptr};
 
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpSocket};
 
 use crate::{config::Config, proxy::Proxy};
 
-/// Spawns a new server configured according to `config` parameter and
-/// gracefully shuts down the server when the `shoutdown` future is ready.
-pub async fn start(
+/// Creates and configures the socket that the server will use to listen but
+/// does nothing else, in order to accept connections the returned future
+/// must be polled.
+///
+/// ```no_run
+/// #[tokio::main]
+/// async fn main() -> Result<(), tokio::io::Error> {
+///     let (address, server) = rxh::server::init(rxh::Config::default(), tokio::signal::ctrl_c())?;
+///
+///     // The returned future must be polled, otherwise it does nothing.
+///     server.await?;
+///
+///     Ok(())
+/// }
+/// ```
+#[must_use = "futures do nothing unless polled"]
+pub fn init(
     config: Config,
     shutdown: impl Future,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(SocketAddr, impl Future<Output = Result<(), io::Error>>), io::Error> {
+    let socket = if config.listen.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+
+    #[cfg(not(windows))]
+    socket.set_reuseaddr(true)?;
+
+    socket.bind(config.listen)?;
+
+    // TODO: Hardcoded backlog, maybe this should be configurable.
+    let listener = socket.listen(1024)?;
+    let addr = listener.local_addr().unwrap();
+
+    Ok((addr, master(listener, config, shutdown)))
+}
+
+/// "Master" [`Future`], responsible for spawning tasks to handle connections
+/// and gracefully shutting down all tasks.
+async fn master(
+    listener: TcpListener,
+    config: Config,
+    shutdown: impl Future,
+) -> Result<(), io::Error> {
     // Leak the configuration to get a 'static lifetime, which we need to
     // spawn tokio tasks. Later when all tasks have finished, we'll drop this
     // value to avoid actual memory leaks.
@@ -18,7 +57,7 @@ pub async fn start(
     // let mut listen_result = Ok(());
 
     tokio::select! {
-        _result = listen(config) => {
+        _result = listen(listener, config) => {
             println!("End");
             // listen_result = result;
         }
@@ -39,17 +78,11 @@ pub async fn start(
     Ok(())
 }
 
-/// Starts listening for incoming connections on the address
-async fn listen(config: &'static Config) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(config.listen).await?;
-    println!("Listening on http://{}", config.listen);
-
+/// Starts accepting incoming connections and processing HTTP requests.
+async fn listen(listener: TcpListener, config: &'static Config) -> Result<(), io::Error> {
     loop {
         let (stream, client_addr) = listener.accept().await?;
-        // TODO: Unix domain Sockets
-        let server_addr = stream.local_addr().unwrap();
-
-        let config: &'static Config = config;
+        let server_addr = stream.local_addr()?;
 
         tokio::task::spawn(async move {
             if let Err(err) = hyper::server::conn::http1::Builder::new()
