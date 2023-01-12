@@ -6,11 +6,12 @@ mod util;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{header, service::service_fn, Response};
+use rxh::Config;
 use tokio::sync::mpsc;
 use util::{
     http::{request, send_http_request, spawn_backend_server, spawn_client, spawn_reverse_proxy},
     service::{serve_connection, RequestInterceptor},
-    tcp::{ping_all, usable_tcp_listener},
+    tcp::{ping_all, ping_tcp_server, usable_tcp_listener},
 };
 
 #[tokio::test]
@@ -19,7 +20,7 @@ async fn reverse_proxy_client() {
         Ok(Response::new(Full::<Bytes>::from("Hello world")))
     }));
 
-    let (proxy_addr, _) = spawn_reverse_proxy(rxh::Config {
+    let (proxy_addr, _) = spawn_reverse_proxy(Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         target: server_addr,
         prefix: String::from("/"),
@@ -33,10 +34,28 @@ async fn reverse_proxy_client() {
 }
 
 #[tokio::test]
+async fn reverse_proxy_client_receives_404_on_bad_prefix() {
+    let (proxy_addr, _) = spawn_reverse_proxy(Config {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        target: "127.0.0.1:8080".parse().unwrap(),
+        prefix: String::from("/prefix"),
+    });
+
+    ping_tcp_server(proxy_addr).await;
+
+    let uris = ["/unknown", "/invalid", "/wrong", "/test/longer"];
+
+    for uri in uris {
+        let (parts, _) = send_http_request(proxy_addr, request::empty_with_uri(uri)).await;
+        assert_eq!(parts.status, 404);
+    }
+}
+
+#[tokio::test]
 async fn reverse_proxy_backend() {
     let (listener, server_addr) = usable_tcp_listener();
 
-    let (proxy_addr, _) = spawn_reverse_proxy(rxh::Config {
+    let (proxy_addr, _) = spawn_reverse_proxy(Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         target: server_addr,
         prefix: String::from("/"),

@@ -1,3 +1,5 @@
+//! Wrappers and abstractions over [`hyper`] HTTP services.
+
 use std::{convert::Infallible, future::Future, pin::Pin};
 
 use bytes::Bytes;

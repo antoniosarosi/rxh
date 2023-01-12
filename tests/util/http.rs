@@ -1,3 +1,5 @@
+//! HTTP utilities for integrations tests.
+
 use std::{convert::Infallible, net::SocketAddr};
 
 use bytes::Bytes;
@@ -11,7 +13,7 @@ use super::{
 };
 
 /// Starts a backend server in the background with a customizable request
-/// handler.
+/// handler, returning the listening address and task handle.
 pub fn spawn_backend_server<S, B>(service: S) -> (SocketAddr, JoinHandle<()>)
 where
     S: Service<Request<Incoming>, Response = Response<B>, Error = Infallible, Future: Send>
@@ -44,9 +46,8 @@ pub fn spawn_reverse_proxy(config: rxh::Config) -> (SocketAddr, JoinHandle<()>) 
     (addr, handle)
 }
 
-/// Opens a socket and binds it to `from` address before sending an HTTP request
-/// to `to` address. When the response is completely received including the
-/// whole body, its parts are returned.
+/// Sends an HTTP request from the given [`TcpSocket`] to the given
+/// [`SocketAddr`].
 pub async fn send_http_request_from<B>(
     from: TcpSocket,
     to: SocketAddr,
@@ -72,8 +73,8 @@ where
     send_http_request_from(usable_socket().0, to, req).await
 }
 
-/// Same as [`send_http_request`] but from another task. This allows the
-/// current task to continue execution.
+/// Same as [`send_http_request_from`] but runs as a different task. This allows
+/// the current task to continue execution.
 pub fn spawn_client<B>(target: SocketAddr, req: Request<B>) -> (SocketAddr, JoinHandle<()>)
 where
     B: AsyncBody,
@@ -97,5 +98,12 @@ pub mod request {
 
     pub fn empty() -> Request<Empty<Bytes>> {
         Request::builder().body(Empty::<Bytes>::new()).unwrap()
+    }
+
+    pub fn empty_with_uri(uri: &str) -> Request<Empty<Bytes>> {
+        Request::builder()
+            .uri(uri)
+            .body(Empty::<Bytes>::new())
+            .unwrap()
     }
 }
