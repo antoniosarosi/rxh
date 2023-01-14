@@ -5,7 +5,12 @@ use std::{convert::Infallible, net::SocketAddr};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use hyper::{body::Incoming, service::Service, Request, Response};
-use tokio::{self, net::TcpSocket, task::JoinHandle};
+use tokio::{
+    self,
+    net::TcpSocket,
+    sync::{oneshot, watch},
+    task::JoinHandle,
+};
 
 use super::{
     service::{serve_connection, AsyncBody},
@@ -36,14 +41,40 @@ where
 
 /// Starts an RXH reverse proxy server in the background with the given config.
 pub fn spawn_reverse_proxy(config: rxh::Config) -> (SocketAddr, JoinHandle<()>) {
-    // TODO: Replace CTRL-C with something we can actually controll.
-    let (addr, listener) = rxh::server::init(config, tokio::signal::ctrl_c()).unwrap();
+    let server = rxh::Server::init(config).unwrap();
+
+    let addr = server.socket_address();
 
     let handle = tokio::task::spawn(async {
-        listener.await.unwrap();
+        server.run().await.unwrap();
     });
 
     (addr, handle)
+}
+
+/// Starts an RXH reverse proxy server in the background with the given config.
+pub fn spawn_reverse_proxy_with_controllers(
+    config: rxh::Config,
+) -> (
+    SocketAddr,
+    JoinHandle<()>,
+    impl FnOnce(),
+    watch::Receiver<rxh::State>,
+) {
+    let (tx, rx) = oneshot::channel();
+
+    let server = rxh::Server::init(config)
+        .unwrap()
+        .shutdown_on(async move { rx.await });
+
+    let addr = server.socket_address();
+    let state = server.subscribe();
+
+    let handle = tokio::task::spawn(async {
+        server.run().await.unwrap();
+    });
+
+    (addr, handle, || tx.send(()).unwrap(), state)
 }
 
 /// Sends an HTTP request from the given [`TcpSocket`] to the given

@@ -6,9 +6,9 @@ mod notify;
 mod proxy;
 mod request;
 mod response;
-
-pub mod server;
+mod server;
 
 pub use config::Config;
+pub use server::{Server, ShutdownState, State};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -7,7 +7,8 @@ use http_body_util::{BodyExt, Full};
 use hyper::{
     body::{Body, Incoming},
     service::Service,
-    Request, Response,
+    Request,
+    Response,
 };
 use tokio::{self, net::TcpStream, sync::mpsc};
 
