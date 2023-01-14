@@ -6,7 +6,8 @@ use tokio::net::TcpStream;
 
 use crate::{
     config::Config,
-    notification::{Message, Notification},
+    movable::Movable,
+    notify::{Notification, Subscription},
     request::ProxyRequest,
     response::{BoxBodyResponse, LocalResponse, ProxyResponse},
 };
@@ -18,7 +19,7 @@ pub(crate) struct Proxy {
     config: &'static Config,
     client_addr: SocketAddr,
     server_addr: SocketAddr,
-    notification: Notification,
+    subscription: Movable<Subscription>,
 }
 
 impl Proxy {
@@ -27,13 +28,13 @@ impl Proxy {
         config: &'static Config,
         client_addr: SocketAddr,
         server_addr: SocketAddr,
-        notification: Notification,
+        subscription: Subscription,
     ) -> Self {
         Self {
             config,
             client_addr,
             server_addr,
-            notification,
+            subscription: Movable::new(subscription),
         }
     }
 }
@@ -43,7 +44,7 @@ impl Proxy {
 async fn proxy_forward(
     request: ProxyRequest<Incoming>,
     to: SocketAddr,
-    mut notification: Notification,
+    mut subscription: Subscription,
 ) -> Result<BoxBodyResponse, hyper::Error> {
     let stream = TcpStream::connect(to).await.unwrap();
 
@@ -58,8 +59,8 @@ async fn proxy_forward(
             println!("Connection failed: {:?}", err);
         }
 
-        if let Some(Message::Shutdown) = notification.receive() {
-            notification.acknowledge().await;
+        if let Some(Notification::Shutdown) = subscription.receive_notification() {
+            subscription.acknowledge_notification().await;
         }
     });
 
@@ -83,16 +84,16 @@ impl Service<Request<Incoming>> for Proxy {
             ..
         } = *self;
 
-        // TODO: Avoid this clone, it's only needed because we are passed a
-        // mutable reference to self.
-        let notification = self.notification.clone();
+        // Avoid cloning. Unwrapping is ok because we've only called this
+        // function once. Subsequent calls would return an already taken error.
+        let subscription = self.subscription.take().unwrap();
 
         Box::pin(async move {
             if !request.uri().to_string().starts_with(&config.prefix) {
                 Ok(LocalResponse::not_found())
             } else {
                 let request = ProxyRequest::new(request, client_addr, server_addr);
-                proxy_forward(request, config.target, notification).await
+                proxy_forward(request, config.target, subscription).await
             }
         })
     }

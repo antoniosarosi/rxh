@@ -1,7 +1,8 @@
 #![feature(ptr_from_ref)]
 
 mod config;
-mod notification;
+mod movable;
+mod notify;
 mod proxy;
 mod request;
 mod response;

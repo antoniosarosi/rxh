@@ -4,7 +4,7 @@ use tokio::net::{TcpListener, TcpSocket};
 
 use crate::{
     config::Config,
-    notification::{Message, Notifier},
+    notify::{Notification, Notifier},
     proxy::Proxy,
 };
 
@@ -102,7 +102,7 @@ async fn master(
         }
     }
 
-    if let Ok(num_tasks) = notifier.send(Message::Shutdown) {
+    if let Ok(num_tasks) = notifier.send(Notification::Shutdown) {
         println!("{num_tasks} pending connections, waiting for them to end...");
         notifier.collect_acknowledgements().await;
     }
@@ -141,7 +141,7 @@ impl<'a> Server<'a> {
             let (stream, client_addr) = self.listener.accept().await?;
             let server_addr = stream.local_addr()?;
             let config = self.config;
-            let notification = self.notifier.subscribe();
+            let subscription = self.notifier.subscribe();
 
             tokio::task::spawn(async move {
                 if let Err(err) = hyper::server::conn::http1::Builder::new()
@@ -149,7 +149,7 @@ impl<'a> Server<'a> {
                     .title_case_headers(true)
                     .serve_connection(
                         stream,
-                        Proxy::new(config, client_addr, server_addr, notification),
+                        Proxy::new(config, client_addr, server_addr, subscription),
                     )
                     .with_upgrades()
                     .await
