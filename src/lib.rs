@@ -1,6 +1,7 @@
 #![feature(ptr_from_ref)]
 
 mod config;
+mod notification;
 mod proxy;
 mod request;
 mod response;

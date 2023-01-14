@@ -6,6 +6,7 @@ use tokio::net::TcpStream;
 
 use crate::{
     config::Config,
+    notification::{Message, Notification},
     request::ProxyRequest,
     response::{BoxBodyResponse, LocalResponse, ProxyResponse},
 };
@@ -17,15 +18,22 @@ pub(crate) struct Proxy {
     config: &'static Config,
     client_addr: SocketAddr,
     server_addr: SocketAddr,
+    notification: Notification,
 }
 
 impl Proxy {
     /// Creates a new [`Proxy`].
-    pub fn new(config: &'static Config, client_addr: SocketAddr, server_addr: SocketAddr) -> Self {
+    pub fn new(
+        config: &'static Config,
+        client_addr: SocketAddr,
+        server_addr: SocketAddr,
+        notification: Notification,
+    ) -> Self {
         Self {
             config,
             client_addr,
             server_addr,
+            notification,
         }
     }
 }
@@ -35,6 +43,7 @@ impl Proxy {
 async fn proxy_forward(
     request: ProxyRequest<Incoming>,
     to: SocketAddr,
+    mut notification: Notification,
 ) -> Result<BoxBodyResponse, hyper::Error> {
     let stream = TcpStream::connect(to).await.unwrap();
 
@@ -47,6 +56,10 @@ async fn proxy_forward(
     tokio::task::spawn(async move {
         if let Err(err) = conn.await {
             println!("Connection failed: {:?}", err);
+        }
+
+        if let Some(Message::Shutdown) = notification.receive() {
+            notification.acknowledge().await;
         }
     });
 
@@ -67,14 +80,19 @@ impl Service<Request<Incoming>> for Proxy {
             client_addr,
             server_addr,
             config,
+            ..
         } = *self;
+
+        // TODO: Avoid this clone, it's only needed because we are passed a
+        // mutable reference to self.
+        let notification = self.notification.clone();
 
         Box::pin(async move {
             if !request.uri().to_string().starts_with(&config.prefix) {
                 Ok(LocalResponse::not_found())
             } else {
                 let request = ProxyRequest::new(request, client_addr, server_addr);
-                proxy_forward(request, config.target).await
+                proxy_forward(request, config.target, notification).await
             }
         })
     }
