@@ -190,7 +190,7 @@ impl Server {
         }
 
         if let Ok(num_tasks) = notifier.send(Notification::Shutdown) {
-            println!("{num_tasks} pending connections, waiting for them to end...");
+            println!("{num_tasks} pending client connections, waiting for them to end...");
             state.send_replace(State::ShuttingDown(ShutdownState::PendingConnections(
                 num_tasks,
             )));
@@ -218,20 +218,22 @@ impl Server {
         loop {
             let (stream, client_addr) = listener.accept().await?;
             let server_addr = stream.local_addr()?;
-            let subscription = notifier.subscribe();
+            let mut subscription = notifier.subscribe();
+            println!("Connection from {client_addr}");
 
             tokio::task::spawn(async move {
                 if let Err(err) = hyper::server::conn::http1::Builder::new()
                     .preserve_header_case(true)
                     .title_case_headers(true)
-                    .serve_connection(
-                        stream,
-                        Proxy::new(config, client_addr, server_addr, subscription),
-                    )
+                    .serve_connection(stream, Proxy::new(config, client_addr, server_addr))
                     .with_upgrades()
                     .await
                 {
                     println!("Failed to serve connection: {:?}", err);
+                }
+
+                if let Some(Notification::Shutdown) = subscription.receive_notification() {
+                    subscription.acknowledge_notification().await;
                 }
             });
         }
