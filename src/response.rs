@@ -55,6 +55,14 @@ impl LocalResponse {
             .body(body::full("HTTP 404 NOT FOUND"))
             .unwrap()
     }
+
+    pub fn bad_gateway() -> BoxBodyResponse {
+        Self::builder()
+            .status(http::StatusCode::BAD_GATEWAY)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(body::full("HTTP 502 BAD GATEWAY"))
+            .unwrap()
+    }
 }
 
 /// Let everybody know who is running this server ;)
@@ -73,15 +81,21 @@ pub(crate) fn rxh_server_header() -> String {
     format!("rxh/{}", crate::VERSION)
 }
 
-mod body {
+pub mod body {
     //! Utilities for creating common response bodies.
 
     use bytes::Bytes;
-    use http_body_util::{combinators::BoxBody, BodyExt, Full};
+    use http_body_util::{combinators::BoxBody, BodyExt, Full, Empty};
 
     /// Single chunk body.
     pub(crate) fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
         Full::new(chunk.into())
+            .map_err(|never| match never {})
+            .boxed()
+    }
+
+    pub fn empty() -> BoxBody<Bytes, hyper::Error> {
+        Empty::<Bytes>::new()
             .map_err(|never| match never {})
             .boxed()
     }

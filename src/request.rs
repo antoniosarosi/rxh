@@ -122,4 +122,12 @@ impl<T> ProxyRequest<T> {
 
         self.request
     }
+
+    pub fn into_inner(self) -> Request<T> {
+        self.request
+    }
+
+    pub fn inner(&self) -> &Request<T> {
+        &self.request
+    }
 }
