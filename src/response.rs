@@ -25,6 +25,10 @@ impl<T> ProxyResponse<T> {
         Self { response }
     }
 
+    pub fn status(&self) -> http::StatusCode {
+        self.response.status()
+    }
+
     /// Consumes this [`ProxyResponse`] and returns the final response that
     /// should be sent to the client.
     pub fn into_forwarded(mut self) -> Response<T> {
@@ -34,6 +38,28 @@ impl<T> ProxyResponse<T> {
         );
 
         self.response
+    }
+
+    pub fn into_upgraded(self) -> (ProxyResponse<T>, Response<()>) {
+        let (parts, body) = self.response.into_parts();
+
+        let mut builder = Response::builder()
+            .status(parts.status)
+            .version(parts.version);
+
+        *builder.headers_mut().unwrap() = parts.headers.clone();
+
+        let forward_response = Self::new(builder.body(body).unwrap());
+
+        let mut builder = Response::builder()
+            .status(parts.status)
+            .version(parts.version);
+        *builder.headers_mut().unwrap() = parts.headers;
+        *builder.extensions_mut().unwrap() = parts.extensions;
+
+        let upgrade_response = builder.body(()).unwrap();
+
+        (forward_response, upgrade_response)
     }
 }
 
@@ -85,7 +111,7 @@ pub mod body {
     //! Utilities for creating common response bodies.
 
     use bytes::Bytes;
-    use http_body_util::{combinators::BoxBody, BodyExt, Full, Empty};
+    use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 
     /// Single chunk body.
     pub(crate) fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {

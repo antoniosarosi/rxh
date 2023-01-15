@@ -1,19 +1,13 @@
 use std::{future::Future, net::SocketAddr, pin::Pin};
 
 use http_body_util::BodyExt;
-use hyper::{
-    body::Incoming,
-    service::Service,
-    upgrade::{OnUpgrade, Upgraded},
-    Request,
-    Response,
-};
+use hyper::{body::Incoming, service::Service, upgrade::Upgraded, Request};
 use tokio::{net::TcpStream, sync::oneshot};
 
 use crate::{
     config::Config,
     request::ProxyRequest,
-    response::{self, BoxBodyResponse, LocalResponse, ProxyResponse},
+    response::{BoxBodyResponse, LocalResponse, ProxyResponse},
 };
 
 /// Proxy service. Handles incoming requests from clients and responses from
@@ -21,41 +15,60 @@ use crate::{
 pub(crate) struct Proxy {
     /// Reference to global config.
     config: &'static Config,
+
+    // Socket address of the connected client.
     client_addr: SocketAddr,
+
+    // Listening socket address.
     server_addr: SocketAddr,
 }
 
+/// TCP tunnel for upgraded connections such as Websockets. This tunnel needs
+/// both the client upgraded connection and the server upgraded connection. We
+/// don't know when this connections are available since they're handled by
+/// different tasks, so the have to be sent on a channel.
 struct Tunnel {
-    client_rx: oneshot::Receiver<Upgraded>,
-    server_rx: oneshot::Receiver<Upgraded>,
+    /// Used to receive the upgraded client IO when it's ready.
+    client_upgraded_io_receiver: oneshot::Receiver<Upgraded>,
+
+    /// Used to receive the upgraded backedn server IO when it's ready.
+    server_upgraded_io_receiver: oneshot::Receiver<Upgraded>,
 }
 
 impl Tunnel {
-    pub fn new(
-        client_rx: oneshot::Receiver<Upgraded>,
-        server_rx: oneshot::Receiver<Upgraded>,
-    ) -> Self {
-        Self {
-            client_rx,
-            server_rx,
-        }
+    /// Inititalizes a new [`Tunnel`] which can be enabled later by calling
+    /// [`Tunner::enable`].
+    pub fn init() -> (Self, oneshot::Sender<Upgraded>, oneshot::Sender<Upgraded>) {
+        let (client_tx, client_rx) = oneshot::channel();
+        let (server_tx, server_rx) = oneshot::channel();
+
+        let tunnel = Self {
+            client_upgraded_io_receiver: client_rx,
+            server_upgraded_io_receiver: server_rx,
+        };
+
+        (tunnel, client_tx, server_tx)
     }
 
-    // TODO: Error handling
-    pub async fn allow(self) {
-        let mut client = self.client_rx.await.unwrap();
-        let mut server = self.server_rx.await.unwrap();
+    /// The tunnel waits until it receives the upgraded connections. Once both
+    /// the client and server connections are ready, TCP traffic is forwarded
+    /// from client to server and viceversa.
+    pub async fn enable(self) {
+        // TODO: Error handling
+        let mut client_io = self.client_upgraded_io_receiver.await.unwrap();
+        let mut server_io = self.server_upgraded_io_receiver.await.unwrap();
 
-        let (c, s) = tokio::io::copy_bidirectional(&mut client, &mut server)
-            .await
-            .unwrap();
+        let (client_bytes, server_bytes) =
+            tokio::io::copy_bidirectional(&mut client_io, &mut server_io)
+                .await
+                .unwrap();
 
-        println!("Client wrote {c} bytes, server wrote {s} bytes");
+        println!("Client wrote {client_bytes}, server wrote {server_bytes}");
     }
 }
 
 impl Proxy {
-    /// Creates a new [`Proxy`].
+    /// Creates a new [`Proxy`] service.
     pub fn new(config: &'static Config, client_addr: SocketAddr, server_addr: SocketAddr) -> Self {
         Self {
             config,
@@ -68,10 +81,12 @@ impl Proxy {
 /// Forwards the request to the target server and returns the response sent
 /// by the target server. See [`ProxyRequest`] and [`ProxyResponse`].
 async fn proxy_forward(
-    request: ProxyRequest<Incoming>,
+    mut request: ProxyRequest<Incoming>,
     to: SocketAddr,
 ) -> Result<BoxBodyResponse, hyper::Error> {
-    let stream = TcpStream::connect(to).await.unwrap();
+    let Ok(stream) = TcpStream::connect(to).await else {
+        return Ok(LocalResponse::bad_gateway());
+    };
 
     let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
         .preserve_header_case(true)
@@ -85,76 +100,39 @@ async fn proxy_forward(
         }
     });
 
-    let mut request = request.into_forwarded();
-
-    let (client_tx, client_rx) = oneshot::channel();
-    let (server_tx, server_rx) = oneshot::channel();
-
-    let tunnel = Tunnel::new(client_rx, server_rx);
+    let (tunnel, client_upgraded_io_sender, server_upgraded_io_sender) = Tunnel::init();
 
     if request.headers().contains_key(hyper::header::UPGRADE) {
-        let (parts, body) = request.into_parts();
-        let mut builder = Request::builder()
-            .method(&parts.method)
-            .uri(&parts.uri)
-            .version(parts.version.clone());
-        *builder.headers_mut().unwrap() = parts.headers.clone();
-
-        request = builder.body(body).unwrap();
-
-        let mut builder = Request::builder()
-            .method(&parts.method)
-            .uri(&parts.uri)
-            .version(parts.version.clone());
-        *builder.headers_mut().unwrap() = parts.headers;
-        *builder.extensions_mut().unwrap() = parts.extensions;
-        let upgrade_request = builder.body(response::body::empty()).unwrap();
+        let (forward_request, upgrade_request) = request.into_upgraded();
+        request = forward_request;
 
         tokio::task::spawn(async move {
             match hyper::upgrade::on(upgrade_request).await {
-                Ok(upgraded) => {
-                    client_tx.send(upgraded).unwrap();
-                }
+                Ok(upgraded) => client_upgraded_io_sender.send(upgraded).unwrap(),
                 Err(err) => println!("err {err}"),
             };
         });
     }
 
-    let mut response = sender.send_request(request).await?;
+    let mut response = ProxyResponse::new(sender.send_request(request.into_forwarded()).await?);
 
     if response.status() == http::StatusCode::SWITCHING_PROTOCOLS {
-        let (parts, body) = response.into_parts();
-
-        let mut builder = Response::builder()
-            .status(parts.status)
-            .version(parts.version);
-        *builder.headers_mut().unwrap() = parts.headers.clone();
-
-        response = builder.body(body).unwrap();
-
-        let mut builder = Response::builder()
-            .status(parts.status)
-            .version(parts.version);
-        *builder.headers_mut().unwrap() = parts.headers;
-        *builder.extensions_mut().unwrap() = parts.extensions;
-
-        let upgrade_response = builder.body(response::body::empty()).unwrap();
+        let (forward_response, upgrade_response) = response.into_upgraded();
+        response = forward_response;
 
         tokio::task::spawn(async move {
             match hyper::upgrade::on(upgrade_response).await {
-                Ok(upgraded) => {
-                    server_tx.send(upgraded).unwrap();
-                }
+                Ok(upgraded) => server_upgraded_io_sender.send(upgraded).unwrap(),
                 Err(err) => println!("err {err}"),
             }
         });
 
         tokio::spawn(async move {
-            tunnel.allow().await;
+            tunnel.enable().await;
         });
     }
 
-    Ok(ProxyResponse::new(response.map(|body| body.boxed())).into_forwarded())
+    Ok(response.into_forwarded().map(|body| body.boxed()))
 }
 
 impl Service<Request<Incoming>> for Proxy {
@@ -169,11 +147,7 @@ impl Service<Request<Incoming>> for Proxy {
             client_addr,
             server_addr,
             config,
-            ..
         } = *self;
-
-        // Avoid cloning. Unwrapping is ok because we've only called this
-        // function once. Subsequent calls would return an already taken error.
 
         Box::pin(async move {
             if !request.uri().to_string().starts_with(&config.prefix) {

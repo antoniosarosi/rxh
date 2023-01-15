@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use http::HeaderMap;
 use hyper::{
     header::{self, HeaderValue},
     Request,
@@ -25,6 +26,10 @@ impl<T> ProxyRequest<T> {
             client_addr,
             server_addr,
         }
+    }
+
+    pub fn headers(&self) -> &HeaderMap {
+        self.request.headers()
     }
 
     /// Consumes the [`ProxyRequest`] returning a [`hyper::Request`] that
@@ -123,11 +128,32 @@ impl<T> ProxyRequest<T> {
         self.request
     }
 
-    pub fn into_inner(self) -> Request<T> {
-        self.request
-    }
+    pub fn into_upgraded(self) -> (ProxyRequest<T>, Request<()>) {
+        let (parts, body) = self.request.into_parts();
 
-    pub fn inner(&self) -> &Request<T> {
-        &self.request
+        let mut builder = Request::builder()
+            .method(&parts.method)
+            .uri(&parts.uri)
+            .version(parts.version.clone());
+
+        *builder.headers_mut().unwrap() = parts.headers.clone();
+
+        let forward_request = Self::new(
+            builder.body(body).unwrap(),
+            self.client_addr,
+            self.server_addr,
+        );
+
+        let mut builder = Request::builder()
+            .method(parts.method)
+            .uri(parts.uri)
+            .version(parts.version.clone());
+
+        *builder.headers_mut().unwrap() = parts.headers;
+        *builder.extensions_mut().unwrap() = parts.extensions;
+
+        let upgrade_request = builder.body(()).unwrap();
+
+        (forward_request, upgrade_request)
     }
 }
