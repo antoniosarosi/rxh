@@ -1,7 +1,7 @@
 use std::{future::Future, net::SocketAddr, pin::Pin};
 
 use http_body_util::BodyExt;
-use hyper::{body::Incoming, service::Service, upgrade::Upgraded, Request};
+use hyper::{body::Incoming, header, service::Service, upgrade::Upgraded, Request};
 use tokio::{net::TcpStream, sync::oneshot};
 
 use crate::{
@@ -29,41 +29,42 @@ pub(crate) struct Proxy {
 /// different tasks, so the have to be sent on a channel.
 struct Tunnel {
     /// Used to receive the upgraded client IO when it's ready.
-    client_upgraded_io_receiver: oneshot::Receiver<Upgraded>,
+    client_io_receiver: oneshot::Receiver<Upgraded>,
 
     /// Used to receive the upgraded backedn server IO when it's ready.
-    server_upgraded_io_receiver: oneshot::Receiver<Upgraded>,
+    server_io_receiver: oneshot::Receiver<Upgraded>,
 }
 
-impl Tunnel {
-    /// Inititalizes a new [`Tunnel`] which can be enabled later by calling
-    /// [`Tunner::enable`].
-    pub fn init() -> (Self, oneshot::Sender<Upgraded>, oneshot::Sender<Upgraded>) {
-        let (client_tx, client_rx) = oneshot::channel();
-        let (server_tx, server_rx) = oneshot::channel();
+/// Just like the name says, represents a value that may or may not be
+/// initialized later. This is used to avoid creating unnecessary [`oneshot`]
+/// channels at [`proxy_forward`]. It is similar to [`std::mem::MaybeUninit`]
+/// but safe, since the data stands behind an [`Option`], which is always
+/// initialized.
+struct MaybeInitLater<T> {
+    inner: Option<T>,
+}
 
-        let tunnel = Self {
-            client_upgraded_io_receiver: client_rx,
-            server_upgraded_io_receiver: server_rx,
-        };
-
-        (tunnel, client_tx, server_tx)
+impl<T> MaybeInitLater<T> {
+    /// Creates a new [`MaybeInitLater`] struct that is not initialized.
+    pub fn uninit() -> Self {
+        Self { inner: None }
     }
 
-    /// The tunnel waits until it receives the upgraded connections. Once both
-    /// the client and server connections are ready, TCP traffic is forwarded
-    /// from client to server and viceversa.
-    pub async fn enable(self) {
-        // TODO: Error handling
-        let mut client_io = self.client_upgraded_io_receiver.await.unwrap();
-        let mut server_io = self.server_upgraded_io_receiver.await.unwrap();
+    /// Initialzes this instance with the given value.
+    pub fn init(&mut self, value: T) {
+        self.inner = Some(value);
+    }
 
-        let (client_bytes, server_bytes) =
-            tokio::io::copy_bidirectional(&mut client_io, &mut server_io)
-                .await
-                .unwrap();
+    /// Assumes that the intance is initialzed and returns the inner value,
+    /// panicking if it was not actually initialized.
+    #[allow(dead_code)]
+    pub fn assume_init(self) -> T {
+        self.inner.unwrap()
+    }
 
-        println!("Client wrote {client_bytes}, server wrote {server_bytes}");
+    /// Returns an [`Option`] of the inner value.
+    pub fn get(self) -> Option<T> {
+        self.inner
     }
 }
 
@@ -76,63 +77,6 @@ impl Proxy {
             server_addr,
         }
     }
-}
-
-/// Forwards the request to the target server and returns the response sent
-/// by the target server. See [`ProxyRequest`] and [`ProxyResponse`].
-async fn proxy_forward(
-    mut request: ProxyRequest<Incoming>,
-    to: SocketAddr,
-) -> Result<BoxBodyResponse, hyper::Error> {
-    let Ok(stream) = TcpStream::connect(to).await else {
-        return Ok(LocalResponse::bad_gateway());
-    };
-
-    let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
-        .preserve_header_case(true)
-        .title_case_headers(true)
-        .handshake(stream)
-        .await?;
-
-    tokio::task::spawn(async move {
-        if let Err(err) = conn.await {
-            println!("Connection failed: {:?}", err);
-        }
-    });
-
-    let (tunnel, client_upgraded_io_sender, server_upgraded_io_sender) = Tunnel::init();
-
-    if request.headers().contains_key(hyper::header::UPGRADE) {
-        let (forward_request, upgrade_request) = request.into_upgraded();
-        request = forward_request;
-
-        tokio::task::spawn(async move {
-            match hyper::upgrade::on(upgrade_request).await {
-                Ok(upgraded) => client_upgraded_io_sender.send(upgraded).unwrap(),
-                Err(err) => println!("err {err}"),
-            };
-        });
-    }
-
-    let mut response = ProxyResponse::new(sender.send_request(request.into_forwarded()).await?);
-
-    if response.status() == http::StatusCode::SWITCHING_PROTOCOLS {
-        let (forward_response, upgrade_response) = response.into_upgraded();
-        response = forward_response;
-
-        tokio::task::spawn(async move {
-            match hyper::upgrade::on(upgrade_response).await {
-                Ok(upgraded) => server_upgraded_io_sender.send(upgraded).unwrap(),
-                Err(err) => println!("err {err}"),
-            }
-        });
-
-        tokio::spawn(async move {
-            tunnel.enable().await;
-        });
-    }
-
-    Ok(response.into_forwarded().map(|body| body.boxed()))
 }
 
 impl Service<Request<Incoming>> for Proxy {
@@ -158,4 +102,104 @@ impl Service<Request<Incoming>> for Proxy {
             }
         })
     }
+}
+
+impl Tunnel {
+    /// Inititalizes a new [`Tunnel`] which can be enabled later by calling
+    /// [`Tunner::enable`].
+    pub fn init() -> (Self, oneshot::Sender<Upgraded>, oneshot::Sender<Upgraded>) {
+        let (client_io_sender, client_io_receiver) = oneshot::channel();
+        let (server_io_sender, server_io_receiver) = oneshot::channel();
+
+        let tunnel = Self {
+            client_io_receiver,
+            server_io_receiver,
+        };
+
+        (tunnel, client_io_sender, server_io_sender)
+    }
+
+    /// The tunnel waits until it receives the upgraded connections. Once both
+    /// the client and server connections are ready, TCP traffic is forwarded
+    /// from client to server and viceversa.
+    pub async fn enable(self) {
+        // TODO: Error handling
+        let mut client_io = self.client_io_receiver.await.unwrap();
+        let mut server_io = self.server_io_receiver.await.unwrap();
+
+        let (client_bytes, server_bytes) =
+            tokio::io::copy_bidirectional(&mut client_io, &mut server_io)
+                .await
+                .unwrap();
+
+        println!("Client wrote {client_bytes}, server wrote {server_bytes}");
+    }
+}
+
+/// Used to avoid repeating the same code twice. If [`hyper`] exposed the
+/// trait [`hyper::upgrade::sealed::CanUpgrade`] this could be a generic
+/// function with bounds, but of course they don't.
+macro_rules! proxy_upgrade {
+    ($message:ident, $io_sender:ident) => {{
+        let (forward_message, upgrade_message) = $message.into_upgraded();
+
+        tokio::task::spawn(async move {
+            match hyper::upgrade::on(upgrade_message).await {
+                Ok(upgraded) => $io_sender.send(upgraded).unwrap(),
+                Err(err) => println!("Error upgrading connection {}", err),
+            };
+        });
+
+        forward_message
+    }};
+}
+
+/// Forwards the request to the target server and returns the response sent
+/// by the target server. See [`ProxyRequest`] and [`ProxyResponse`]. If the
+/// client wants to upgrade the connection and the server agrees by sending
+/// a `101` status code, then a TCP tunnel that forwards traffic bidirectionally
+/// is spawned in a new Tokio task.
+async fn proxy_forward(
+    mut request: ProxyRequest<Incoming>,
+    to: SocketAddr,
+) -> Result<BoxBodyResponse, hyper::Error> {
+    let Ok(stream) = TcpStream::connect(to).await else {
+        return Ok(LocalResponse::bad_gateway());
+    };
+
+    let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
+        .preserve_header_case(true)
+        .title_case_headers(true)
+        .handshake(stream)
+        .await?;
+
+    tokio::task::spawn(async move {
+        if let Err(err) = conn.await {
+            println!("Connection failed: {:?}", err);
+        }
+    });
+
+    let mut maybe_tunnel = MaybeInitLater::uninit();
+
+    if request.headers().contains_key(header::UPGRADE) {
+        let (tunnel, client_io_sender, server_io_sender) = Tunnel::init();
+        maybe_tunnel.init((tunnel, server_io_sender));
+        request = proxy_upgrade!(request, client_io_sender);
+    }
+
+    let mut response = ProxyResponse::new(sender.send_request(request.into_forwarded()).await?);
+
+    if response.status() == http::StatusCode::SWITCHING_PROTOCOLS {
+        if let Some((tunnel, server_io_sender)) = maybe_tunnel.get() {
+            response = proxy_upgrade!(response, server_io_sender);
+            tokio::spawn(tunnel.enable());
+        } else {
+            // The upstream server sent an HTTP 101 response without the
+            // client asking for an upgrade, which means the tunnel is
+            // not initialzed so we can't proxy data from the client.
+            return Ok(LocalResponse::bad_gateway());
+        }
+    }
+
+    Ok(response.into_forwarded().map(|body| body.boxed()))
 }

@@ -40,6 +40,7 @@ impl<T> ProxyResponse<T> {
         self.response
     }
 
+    // TODO: Docs
     pub fn into_upgraded(self) -> (ProxyResponse<T>, Response<()>) {
         let (parts, body) = self.response.into_parts();
 
@@ -120,6 +121,7 @@ pub mod body {
             .boxed()
     }
 
+    #[allow(dead_code)]
     pub fn empty() -> BoxBody<Bytes, hyper::Error> {
         Empty::<Bytes>::new()
             .map_err(|never| match never {})

@@ -128,6 +128,7 @@ impl<T> ProxyRequest<T> {
         self.request
     }
 
+    // TODO: Docs
     pub fn into_upgraded(self) -> (ProxyRequest<T>, Request<()>) {
         let (parts, body) = self.request.into_parts();
 
