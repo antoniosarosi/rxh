@@ -168,7 +168,7 @@ impl Server {
             listener,
             notifier,
             shutdown,
-            ..
+            address,
         } = self;
 
         state.send_replace(State::Listening);
@@ -177,6 +177,8 @@ impl Server {
         // spawn tokio tasks. Later when all tasks have finished, we'll drop this
         // value to avoid actual memory leaks.
         let config = Box::leak(Box::new(config));
+
+        println!("Listening on http://{address}");
 
         tokio::select! {
             result = Self::listen(listener, config, &notifier) => {
