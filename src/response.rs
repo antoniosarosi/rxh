@@ -40,14 +40,18 @@ impl<T> ProxyResponse<T> {
         self.response
     }
 
-    // TODO: Docs
+    /// Read [`crate::request::ProxyRequest::into_upgraded`] first, because the
+    /// exact same logic applies here. In a nutshell, we need 2 owned requests,
+    /// one that we send to the client which includes the incoming body from
+    /// the upstream server, and another one that we use to initialize the
+    /// upgraded IO which includes the extensions from the upstream server's
+    /// response.
     pub fn into_upgraded(self) -> (ProxyResponse<T>, Response<()>) {
         let (parts, body) = self.response.into_parts();
 
         let mut builder = Response::builder()
             .status(parts.status)
             .version(parts.version);
-
         *builder.headers_mut().unwrap() = parts.headers.clone();
 
         let forward_response = Self::new(builder.body(body).unwrap());

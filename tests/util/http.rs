@@ -63,9 +63,7 @@ pub fn spawn_reverse_proxy_with_controllers(
 ) {
     let (tx, rx) = oneshot::channel();
 
-    let server = rxh::Server::init(config)
-        .unwrap()
-        .shutdown_on(async move { rx.await });
+    let server = rxh::Server::init(config).unwrap().shutdown_on(rx);
 
     let addr = server.socket_address();
     let state = server.subscribe();

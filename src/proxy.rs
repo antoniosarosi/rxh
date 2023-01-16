@@ -35,39 +35,6 @@ struct Tunnel {
     server_io_receiver: oneshot::Receiver<Upgraded>,
 }
 
-/// Just like the name says, represents a value that may or may not be
-/// initialized later. This is used to avoid creating unnecessary [`oneshot`]
-/// channels at [`proxy_forward`]. It is similar to [`std::mem::MaybeUninit`]
-/// but safe, since the data stands behind an [`Option`], which is always
-/// initialized.
-struct MaybeInitLater<T> {
-    inner: Option<T>,
-}
-
-impl<T> MaybeInitLater<T> {
-    /// Creates a new [`MaybeInitLater`] struct that is not initialized.
-    pub fn uninit() -> Self {
-        Self { inner: None }
-    }
-
-    /// Initialzes this instance with the given value.
-    pub fn init(&mut self, value: T) {
-        self.inner = Some(value);
-    }
-
-    /// Assumes that the intance is initialzed and returns the inner value,
-    /// panicking if it was not actually initialized.
-    #[allow(dead_code)]
-    pub fn assume_init(self) -> T {
-        self.inner.unwrap()
-    }
-
-    /// Returns an [`Option`] of the inner value.
-    pub fn get(self) -> Option<T> {
-        self.inner
-    }
-}
-
 impl Proxy {
     /// Creates a new [`Proxy`] service.
     pub fn new(config: &'static Config, client_addr: SocketAddr, server_addr: SocketAddr) -> Self {
@@ -138,7 +105,8 @@ impl Tunnel {
 
 /// Used to avoid repeating the same code twice. If [`hyper`] exposed the
 /// trait [`hyper::upgrade::sealed::CanUpgrade`] this could be a generic
-/// function with bounds, but of course they don't.
+/// function with bounds, but of course they don't. To know more about how
+/// HTTP upgrades work internally, see [`ProxyRequest::into_upgraded`].
 macro_rules! proxy_upgrade {
     ($message:ident, $io_sender:ident) => {{
         let (forward_message, upgrade_message) = $message.into_upgraded();
@@ -158,7 +126,8 @@ macro_rules! proxy_upgrade {
 /// by the target server. See [`ProxyRequest`] and [`ProxyResponse`]. If the
 /// client wants to upgrade the connection and the server agrees by sending
 /// a `101` status code, then a TCP tunnel that forwards traffic bidirectionally
-/// is spawned in a new Tokio task.
+/// is spawned in a new Tokio task. Upgrading is a little bit tricky, see
+/// [`ProxyRequest::into_upgraded`] method and [`proxy_upgrade`] macro.
 async fn proxy_forward(
     mut request: ProxyRequest<Incoming>,
     to: SocketAddr,
@@ -179,18 +148,18 @@ async fn proxy_forward(
         }
     });
 
-    let mut maybe_tunnel = MaybeInitLater::uninit();
+    let mut maybe_tunnel = None;
 
     if request.headers().contains_key(header::UPGRADE) {
         let (tunnel, client_io_sender, server_io_sender) = Tunnel::init();
-        maybe_tunnel.init((tunnel, server_io_sender));
+        maybe_tunnel = Some((tunnel, server_io_sender));
         request = proxy_upgrade!(request, client_io_sender);
     }
 
     let mut response = ProxyResponse::new(sender.send_request(request.into_forwarded()).await?);
 
     if response.status() == http::StatusCode::SWITCHING_PROTOCOLS {
-        if let Some((tunnel, server_io_sender)) = maybe_tunnel.get() {
+        if let Some((tunnel, server_io_sender)) = maybe_tunnel {
             response = proxy_upgrade!(response, server_io_sender);
             tokio::spawn(tunnel.enable());
         } else {
