@@ -1,6 +1,6 @@
 # RXH
 
-RXH is an HTTP Reverse Proxy built with [`hyper`](https://github.com/hyperium/hyper)
+RXH is an HTTP reverse proxy built with [`hyper`](https://github.com/hyperium/hyper)
 and [`tokio`](https://github.com/tokio-rs/tokio) just for fun. For now, the
 configuration file ([`rxh.json`](rxh.json)) only accepts this:
 
@@ -16,7 +16,7 @@ configuration file ([`rxh.json`](rxh.json)) only accepts this:
 address including IP and port) and `"target"` is the address where requests are
 forwarded (full socket address). Finally, `"prefix"` is an optional
 string that will make RXH return `HTTP 404` for any request whose URI doesn't
-start with such string. If ommited, the default prefix is `"/"`.
+start with such string. If omitted, the default prefix is `"/"`.
 
 Start the server using `cargo`:
 
