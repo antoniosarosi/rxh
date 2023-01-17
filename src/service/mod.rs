@@ -61,11 +61,11 @@ impl Service<Request<Incoming>> for Rxh {
                 return Ok(LocalResponse::not_found());
             }
             match &config.kind {
-                config::Kind::Proxy(ref proxy) => {
+                config::Kind::Proxy(proxy) => {
                     let request = ProxyRequest::new(request, client_addr, server_addr);
                     proxy::forward(request, proxy.target).await
                 }
-                config::Kind::Static(ref config) => {
+                config::Kind::Static(config) => {
                     Ok(send_file(&request.uri().path()[1..], config).await)
                 }
             }

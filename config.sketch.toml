@@ -1,0 +1,20 @@
+[[server]]
+
+kind = "proxy"
+listen = "127.0.0.1:8100"
+target = "127.0.0.1:8080"
+
+[[server.request.headers]]
+
+forwarded = { extend = true }
+
+[[server.response.headers]]
+
+via = { extend = true }
+server = { override = true, version = true }
+
+[[server]]
+
+kind = "static"
+listen = "127.0.0.1:8200"
+root = "/home/user/website"

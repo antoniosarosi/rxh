@@ -2,21 +2,27 @@
 
 RXH is an HTTP reverse proxy built with [`hyper`](https://github.com/hyperium/hyper)
 and [`tokio`](https://github.com/tokio-rs/tokio) just for fun. For now, the
-configuration file ([`rxh.json`](rxh.json)) only accepts this:
+configuration file ([`rxh.toml`](rxh.toml)) only accepts this:
 
-```json
-{
-    "listen": "127.0.0.1:8100",
-    "target": "127.0.0.1:8080",
-    "prefix": "/api"
-}
+```toml
+[[server]]
+
+kind = "proxy"
+listen = "127.0.0.1:8100"
+target = "127.0.0.1:8080"
+
+[[server]]
+
+kind = "static"
+listen = "127.0.0.1:8200"
+root = "/home/user/website"
 ```
 
-`"listen"` is the address where the proxy accepts connections (full socket
-address including IP and port) and `"target"` is the address where requests are
-forwarded (full socket address). Finally, `"prefix"` is an optional
-string that will make RXH return `HTTP 404` for any request whose URI doesn't
-start with such string. If omitted, the default prefix is `"/"`.
+Multiple servers can be configured to run on different ports, each one of them
+with its own configuration. `"proxy"` servers forward data to an upstream server
+whose address is specified by `"target"`. All addresses must include IP and port
+number. On the other hand, `"static"` servers simply serve static files from
+the `"root"` directory, which must be an absolute path.
 
 Start the server using `cargo`:
 
@@ -33,7 +39,7 @@ cargo run
 - [ ] HTTP/2
 - [x] Static files server.
 - [x] Multiple servers on different ports, both static and proxy.
-- [ ] Header customization configs (see [`config.sketch.json`](config.sketch.json)).
+- [ ] Header customization configs (see [`config.sketch.toml`](config.sketch.toml)).
 - [ ] Hot reloading (switch the config on the fly without stopping).
 - [ ] Cache.
 - [ ] Load balancing.
