@@ -25,10 +25,6 @@ impl<T> ProxyResponse<T> {
         Self { response }
     }
 
-    pub fn status(&self) -> http::StatusCode {
-        self.response.status()
-    }
-
     /// Consumes this [`ProxyResponse`] and returns the final response that
     /// should be sent to the client.
     pub fn into_forwarded(mut self) -> Response<T> {
@@ -38,33 +34,6 @@ impl<T> ProxyResponse<T> {
         );
 
         self.response
-    }
-
-    /// Read [`crate::request::ProxyRequest::into_upgraded`] first, because the
-    /// exact same logic applies here. In a nutshell, we need 2 owned requests,
-    /// one that we send to the client which includes the incoming body from
-    /// the upstream server, and another one that we use to initialize the
-    /// upgraded IO which includes the extensions from the upstream server's
-    /// response.
-    pub fn into_upgraded(self) -> (ProxyResponse<T>, Response<()>) {
-        let (parts, body) = self.response.into_parts();
-
-        let mut builder = Response::builder()
-            .status(parts.status)
-            .version(parts.version);
-        *builder.headers_mut().unwrap() = parts.headers.clone();
-
-        let forward_response = Self::new(builder.body(body).unwrap());
-
-        let mut builder = Response::builder()
-            .status(parts.status)
-            .version(parts.version);
-        *builder.headers_mut().unwrap() = parts.headers;
-        *builder.extensions_mut().unwrap() = parts.extensions;
-
-        let upgrade_response = builder.body(()).unwrap();
-
-        (forward_response, upgrade_response)
     }
 }
 
@@ -107,6 +76,8 @@ impl LocalResponse {
 ///
 /// Hello World
 /// ```
+///
+/// TODO: Allow configuration for this header (no version, custom string, etc).
 #[inline]
 pub(crate) fn rxh_server_header() -> String {
     format!("rxh/{}", crate::VERSION)
