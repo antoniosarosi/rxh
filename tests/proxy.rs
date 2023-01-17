@@ -8,7 +8,7 @@ use std::io;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{header, service::service_fn, Response};
-use rxh::{Config, State};
+use rxh::{Config, ShutdownState, State};
 use tokio::sync::mpsc;
 use util::{
     http::{
@@ -58,6 +58,23 @@ async fn reverse_proxy_client_receives_404_on_bad_prefix() {
         let (parts, _) = send_http_request(proxy_addr, request::empty_with_uri(uri)).await;
         assert_eq!(parts.status, 404);
     }
+}
+
+#[tokio::test]
+async fn reverse_proxy_client_receives_502_on_backend_server_not_available() {
+    let (_, server_socket_addr) = usable_socket();
+
+    let (proxy_addr, _) = spawn_reverse_proxy(Config {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        target: server_socket_addr,
+        prefix: String::from("/"),
+    });
+
+    ping_tcp_server(proxy_addr).await;
+
+    let (parts, _) = send_http_request(proxy_addr, request::empty()).await;
+
+    assert_eq!(parts.status, http::StatusCode::BAD_GATEWAY);
 }
 
 #[tokio::test]
@@ -128,7 +145,7 @@ async fn graceful_shutdown() {
     // Now the server should know that there are still 2 pending connections.
     assert_eq!(
         *state.borrow(),
-        State::ShuttingDown(rxh::ShutdownState::PendingConnections(2))
+        State::ShuttingDown(ShutdownState::PendingConnections(2))
     );
 
     // If we try to connect using another socket it should not allow us.
