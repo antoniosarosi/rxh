@@ -56,7 +56,7 @@ async fn reverse_proxy_client_receives_404_on_bad_prefix() {
 
     for uri in uris {
         let (parts, _) = send_http_request(proxy_addr, request::empty_with_uri(uri)).await;
-        assert_eq!(parts.status, 404);
+        assert_eq!(parts.status, http::StatusCode::NOT_FOUND);
     }
 }
 
@@ -114,7 +114,7 @@ async fn graceful_shutdown() {
         Ok(Response::new(Full::<Bytes>::from("Hello world")))
     }));
 
-    let (proxy_addr, _, shutdown, state) = spawn_reverse_proxy_with_controllers(Config {
+    let (proxy_addr, _, shutdown, mut state) = spawn_reverse_proxy_with_controllers(Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         target: server_addr,
         prefix: String::from("/hello"),
@@ -122,6 +122,8 @@ async fn graceful_shutdown() {
 
     ping_all(&[server_addr, proxy_addr]).await;
 
+    // Make sure server is listening.
+    state.changed().await.unwrap();
     assert_eq!(*state.borrow(), State::Listening);
 
     let (sock1, _) = usable_socket();
@@ -139,8 +141,8 @@ async fn graceful_shutdown() {
     // Shutdown the server.
     shutdown();
 
-    // Yield again to let the server update it's internal state.
-    tokio::task::yield_now().await;
+    // Wait for the state change.
+    state.changed().await.unwrap();
 
     // Now the server should know that there are still 2 pending connections.
     assert_eq!(
@@ -169,4 +171,8 @@ async fn graceful_shutdown() {
         assert!(buff.starts_with(b"HTTP/1.1 200 OK"));
         assert!(buff[..bytes].ends_with(b"Hello world"));
     }
+
+    // Finally, after the streams above are dropped, server should be down.
+    state.changed().await.unwrap();
+    assert_eq!(*state.borrow(), State::ShuttingDown(ShutdownState::Done));
 }
