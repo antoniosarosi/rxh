@@ -2,12 +2,17 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
-/// Global configuration options parsed from the config file.
+/// Global configuration, includes all servers.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
-    /// Proxy target, this is where incoming requests are forwarded.
-    pub target: SocketAddr,
+    /// Servers to spawn.
+    #[serde(rename = "server")]
+    pub servers: Vec<Server>,
+}
 
+/// Server specific configuration.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Server {
     /// TCP listener bind address.
     pub listen: SocketAddr,
 
@@ -15,16 +20,35 @@ pub struct Config {
     /// URI starts with this prefix, otherwise respond with HTTP 404.
     #[serde(default = "default::prefix")]
     pub prefix: String,
+
+    /// Kind specific configuration.
+    #[serde(flatten)]
+    pub kind: Kind,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            target: "0.0.0.0:8080".parse().unwrap(),
-            listen: "0.0.0.0:8100".parse().unwrap(),
-            prefix: default::prefix(),
-        }
-    }
+//// Server kind, for now only [`Proxy`] or [`Static`].
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "kind")]
+pub enum Kind {
+    #[serde(rename = "proxy")]
+    Proxy(Proxy),
+
+    #[serde(rename = "static")]
+    Static(Static),
+}
+
+/// Proxy server configuration.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Proxy {
+    /// Proxy target, this is where incoming requests are forwarded.
+    pub target: SocketAddr,
+}
+
+/// Static files server configuration.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Static {
+    /// Root directory where files should served from.
+    pub root: String,
 }
 
 mod default {

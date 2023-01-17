@@ -30,8 +30,9 @@ cargo run
 - [x] Graceful shutdown (don't kill the process until all sockets are closed).
 - [x] HTTP/1.1 upgraded connections (works like a TCP tunnel).
 - [ ] HTTP `Via` header ([Section 3.6.7 of RFC 5322](https://httpwg.org/specs/rfc9110.html#field.via))
-- [ ] Static files server.
-- [ ] Multiple servers on different ports, both static and proxy.
+- [ ] HTTP/2
+- [x] Static files server.
+- [x] Multiple servers on different ports, both static and proxy.
 - [ ] Header customization configs (see [`config.sketch.json`](config.sketch.json)).
 - [ ] Hot reloading (switch the config on the fly without stopping).
 - [ ] Cache.

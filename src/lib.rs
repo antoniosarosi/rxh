@@ -1,13 +1,13 @@
 #![feature(ptr_from_ref)]
+#![feature(is_some_and)]
 
-mod config;
+mod http;
 mod notify;
-mod proxy;
-mod request;
-mod response;
 mod server;
+mod service;
 
-pub use config::Config;
+pub mod config;
+
 pub use server::{Server, ShutdownState, State};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

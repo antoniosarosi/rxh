@@ -6,9 +6,9 @@ use tokio::{
 };
 
 use crate::{
-    config::Config,
+    config,
     notify::{Notification, Notifier},
-    proxy::Proxy,
+    service::Rxh,
 };
 
 /// The [`Server`] struct is responsible for accepting new connections and
@@ -53,7 +53,7 @@ pub struct Server {
     listener: TcpListener,
 
     /// Configuration for this server.
-    config: Config,
+    config: config::Server,
 
     /// Socket address used by this server to listen for incoming connections.
     address: SocketAddr,
@@ -101,7 +101,7 @@ impl Server {
     /// `await`ed. We do it this way because we use the port 0 for integration
     /// tests, which allows the OS to pick any available port, but we still want
     /// to know which port the server is using.
-    pub fn init(config: Config) -> Result<Self, io::Error> {
+    pub fn init(config: config::Server) -> Result<Self, io::Error> {
         let (state, _) = watch::channel(State::Starting);
 
         let socket = if config.listen.is_ipv4() {
@@ -214,7 +214,7 @@ impl Server {
     /// Starts accepting incoming connections and processing HTTP requests.
     async fn listen(
         listener: TcpListener,
-        config: &'static Config,
+        config: &'static config::Server,
         notifier: &Notifier,
     ) -> Result<(), io::Error> {
         loop {
@@ -227,7 +227,7 @@ impl Server {
                 if let Err(err) = hyper::server::conn::http1::Builder::new()
                     .preserve_header_case(true)
                     .title_case_headers(true)
-                    .serve_connection(stream, Proxy::new(config, client_addr, server_addr))
+                    .serve_connection(stream, Rxh::new(config, client_addr, server_addr))
                     .with_upgrades()
                     .await
                 {

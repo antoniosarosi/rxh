@@ -1,0 +1,11 @@
+[[server]]
+
+kind = "proxy"
+listen = "127.0.0.1:8100"
+target = "127.0.0.1:8080"
+
+[[server]]
+
+kind = "static"
+listen = "127.0.0.1:8200"
+root = "/home/antonio/Code/Projects/rxh"

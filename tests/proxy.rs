@@ -8,9 +8,10 @@ use std::io;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{header, service::service_fn, Response};
-use rxh::{Config, ShutdownState, State};
+use rxh::{ShutdownState, State};
 use tokio::sync::mpsc;
 use util::{
+    config,
     http::{
         request,
         send_http_request,
@@ -29,11 +30,7 @@ async fn reverse_proxy_client() {
         Ok(Response::new(Full::<Bytes>::from("Hello world")))
     }));
 
-    let (proxy_addr, _) = spawn_reverse_proxy(Config {
-        listen: "127.0.0.1:0".parse().unwrap(),
-        target: server_addr,
-        prefix: String::from("/"),
-    });
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target(server_addr));
 
     ping_all(&[server_addr, proxy_addr]).await;
 
@@ -44,11 +41,10 @@ async fn reverse_proxy_client() {
 
 #[tokio::test]
 async fn reverse_proxy_client_receives_404_on_bad_prefix() {
-    let (proxy_addr, _) = spawn_reverse_proxy(Config {
-        listen: "127.0.0.1:0".parse().unwrap(),
-        target: "127.0.0.1:8080".parse().unwrap(),
-        prefix: String::from("/prefix"),
-    });
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target_with_prefix(
+        "127.0.0.1:0".parse().unwrap(),
+        "/prefix",
+    ));
 
     ping_tcp_server(proxy_addr).await;
 
@@ -64,11 +60,7 @@ async fn reverse_proxy_client_receives_404_on_bad_prefix() {
 async fn reverse_proxy_client_receives_502_on_backend_server_not_available() {
     let (_, server_socket_addr) = usable_socket();
 
-    let (proxy_addr, _) = spawn_reverse_proxy(Config {
-        listen: "127.0.0.1:0".parse().unwrap(),
-        target: server_socket_addr,
-        prefix: String::from("/"),
-    });
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target(server_socket_addr));
 
     ping_tcp_server(proxy_addr).await;
 
@@ -81,11 +73,7 @@ async fn reverse_proxy_client_receives_502_on_backend_server_not_available() {
 async fn reverse_proxy_backend() {
     let (listener, server_addr) = usable_tcp_listener();
 
-    let (proxy_addr, _) = spawn_reverse_proxy(Config {
-        listen: "127.0.0.1:0".parse().unwrap(),
-        target: server_addr,
-        prefix: String::from("/"),
-    });
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target(server_addr));
 
     let (client_addr, _) = spawn_client(proxy_addr, request::empty());
 
@@ -114,11 +102,9 @@ async fn graceful_shutdown() {
         Ok(Response::new(Full::<Bytes>::from("Hello world")))
     }));
 
-    let (proxy_addr, _, shutdown, mut state) = spawn_reverse_proxy_with_controllers(Config {
-        listen: "127.0.0.1:0".parse().unwrap(),
-        target: server_addr,
-        prefix: String::from("/hello"),
-    });
+    let (proxy_addr, _, shutdown, mut state) = spawn_reverse_proxy_with_controllers(
+        config::proxy::target_with_prefix(server_addr, "/hello"),
+    );
 
     ping_all(&[server_addr, proxy_addr]).await;
 

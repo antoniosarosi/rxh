@@ -40,7 +40,7 @@ where
 }
 
 /// Starts an RXH reverse proxy server in the background with the given config.
-pub fn spawn_reverse_proxy(config: rxh::Config) -> (SocketAddr, JoinHandle<()>) {
+pub fn spawn_reverse_proxy(config: rxh::config::Server) -> (SocketAddr, JoinHandle<()>) {
     let server = rxh::Server::init(config).unwrap();
 
     let addr = server.socket_address();
@@ -54,7 +54,7 @@ pub fn spawn_reverse_proxy(config: rxh::Config) -> (SocketAddr, JoinHandle<()>) 
 
 /// Starts an RXH reverse proxy server in the background with the given config.
 pub fn spawn_reverse_proxy_with_controllers(
-    config: rxh::Config,
+    config: rxh::config::Server,
 ) -> (
     SocketAddr,
     JoinHandle<()>,
