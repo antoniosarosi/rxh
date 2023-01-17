@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use http::HeaderMap;
+use http::{Extensions, HeaderMap};
 use hyper::{
     header::{self, HeaderValue},
     Request,
@@ -30,6 +30,10 @@ impl<T> ProxyRequest<T> {
 
     pub fn headers(&self) -> &HeaderMap {
         self.request.headers()
+    }
+
+    pub fn extensions_mut(&mut self) -> &mut Extensions {
+        self.request.extensions_mut()
     }
 
     /// Consumes the [`ProxyRequest`] returning a [`hyper::Request`] that
@@ -126,108 +130,5 @@ impl<T> ProxyRequest<T> {
         );
 
         self.request
-    }
-
-    /// This is called when the client sends an HTTP/1.1 `Connection: Upgrade`
-    /// request. In order to set up the underlying upgraded IO (basically, let
-    /// the TCP socket receive any data, don't handle HTTP) we have to give up
-    /// ownership on the request. See [`hyper::upgrade::on`], that's the
-    /// function used to upgrade the connection and it requires either an owned
-    /// [`hyper::Request`] or [`hyper::Response`]. We can also pass a mutable
-    /// reference to that function, but in practice this is not true for servers
-    /// because the upgraded IO won't be initialized until the server responds
-    /// with HTTP 101, which means we have to call [`hyper::upgrade::on`] inside
-    /// a different [`tokio::task`] and respond after. Tokio tasks need to own
-    /// their data, so no references are allowed unless they are 'static.
-    ///
-    /// This wouldn't be an issue if we were a normal server, once we upgrade on
-    /// the request we don't need it anymore. But as it turns out we are a
-    /// reverse proxy, so not only do we have to upgrade on the request, we also
-    /// have to forward the same request to the upstream server, wait for the
-    /// response, check if the upstream server has agreed to upgrade, and if so
-    /// set up a tunnel to allow TCP traffic from the client to the server. Not
-    /// precisely "easy".
-    ///
-    /// The problem comes at "forward the same request to the upstream server"
-    /// part. Remember that if we try to upgrade on the request by calling
-    /// [`hyper::upgrade::on`] inside a newly spawned [`tokio::task`] we've
-    /// already given up ownership on the [`hyper::Request`]. Now, if we want to
-    /// send the same request to the upstream server, which is basically what
-    /// "forward" means, we still need to maintain ownership on the incoming
-    /// [`hyper::Request`] because [`hyper::client::conn::http1::SendRequest`]
-    /// requires an owned [`hyper::Request`] in order to be able to send
-    /// anything.
-    ///
-    /// So, when our [`hyper::service::Service`] is called at
-    /// [`crate::proxy::Proxy`], we are given one owned [`hyper::Request`], but
-    /// due to how the [`hyper`] API is designed we need 2 owned requests. Of
-    /// course, [`hyper::Request`] cannot be cloned because the body part
-    /// arrives in frames (might not be complete yet), in case we were not
-    /// facing enough restrictions so far.
-    ///
-    /// This function is the solution to the problem described above. Instead
-    /// of trying to make the ownership thing work, we simply create two
-    /// separate requests that are almost identical and return them as a tuple.
-    ///
-    /// The first one has the same data (headers & body) as the incoming
-    /// request, but does not include the extensions (see [`http::Extensions`]).
-    /// Skipping all the details, the extensions allow us to call
-    /// [`hyper::upgrade::on`] on a [`hyper::Request`], so they are necessary
-    /// if we want to upgrade. Why are we not including extensions in this newly
-    /// created request then? Because this is the request that we'll send to the
-    /// upstream server, which only needs headers and body. The headers are
-    /// clonable, but the body is not, so we're giving up ownership on the body
-    /// here.
-    ///
-    /// On the other hand, the second request that we create has the same
-    /// headers as the incoming request and the same extensions (not clonable,
-    /// just give up ownership). This is the request that we'll pass as an
-    /// argument to [`hyper::upgrade::on`], and the upgrade will work because
-    /// [`hyper`] will see that there's an `Upgrade` HTTP header and the
-    /// extensions include [`hyper::upgrade::OnUpgrade`], which the library will
-    /// use internally to keep the connection alive allowing TCP traffic. The
-    /// body is not necessary here, that's why we can give up ownership on the
-    /// body in order to create the forwarded request. Similarly, the extensions
-    /// are not necessary for the forwarded request, se we can maintain
-    /// ownership on them until we create the upgraded request.
-    ///
-    /// This little hack allows us to send to the upstream server a request that
-    /// is identical to the incoming request, including the body (although
-    /// upgrade requests usually don't include any body, but just in case) while
-    /// still allowing us to obtain an upgraded connection from the incoming
-    /// request. Maybe there's a better way of handling this, but we would
-    /// probably need to use some private [`hyper`] internals not available on
-    /// the public API.
-    pub fn into_upgraded(self) -> (ProxyRequest<T>, Request<()>) {
-        // Disassemble the incoming request.
-        let (parts, body) = self.request.into_parts();
-
-        // Build the "forwarded request", the one we'll send to the backend.
-        let mut builder = Request::builder()
-            .method(&parts.method)
-            .uri(&parts.uri)
-            .version(parts.version.clone());
-        *builder.headers_mut().unwrap() = parts.headers.clone();
-
-        // This request includes the body from the incoming request.
-        let forward_request = Self::new(
-            builder.body(body).unwrap(),
-            self.client_addr,
-            self.server_addr,
-        );
-
-        // Build the "upgraded request", which we'll use to proxy upgraded data.
-        let mut builder = Request::builder()
-            .method(parts.method)
-            .uri(parts.uri)
-            .version(parts.version.clone());
-        *builder.headers_mut().unwrap() = parts.headers;
-        *builder.extensions_mut().unwrap() = parts.extensions;
-
-        // This request has no body but includes the extensions from the
-        // incoming request.
-        let upgrade_request = builder.body(()).unwrap();
-
-        (forward_request, upgrade_request)
     }
 }
