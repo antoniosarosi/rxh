@@ -5,7 +5,6 @@ use std::{future::Future, net::SocketAddr, pin::Pin};
 
 use hyper::{body::Incoming, service::Service, Request};
 
-use self::files::send_file;
 use crate::{
     config,
     http::{
@@ -69,10 +68,11 @@ impl Service<Request<Incoming>> for Rxh {
             match &pattern.action {
                 config::Action::Forward(backends) => {
                     let request = ProxyRequest::new(request, client_addr, server_addr);
+                    // TODO: Load balancing.
                     proxy::forward(request, *backends.first().unwrap()).await
                 }
                 config::Action::Serve(directory) => {
-                    Ok(send_file(&request.uri().path()[1..], &directory).await)
+                    files::transfer(&request.uri().path()[1..], directory).await
                 }
             }
         })

@@ -221,7 +221,13 @@ impl<'de> Visitor<'de> for ServerVisitor {
                     });
                 }
 
-                Field::Uri => uri = map.next_value()?,
+                Field::Uri => {
+                    if !patterns.is_empty() {
+                        return Err(de::Error::custom(Error::MixedSimpleAndMatch));
+                    }
+
+                    uri = map.next_value()?;
+                }
             }
         }
 
