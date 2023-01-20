@@ -3,6 +3,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config: rxh::config::Config =
         toml::from_str(&tokio::fs::read_to_string("rxh.toml").await?)?;
 
+    println!("{config:?}");
+
     let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
 
     for server in config.servers {

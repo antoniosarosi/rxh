@@ -11,9 +11,10 @@ use crate::{
     service::Rxh,
 };
 
-/// The [`Server`] struct is responsible for accepting new connections and
-/// spawning Tokio tasks to handle them properly, as well as gracefully stopping
-/// the running tasks. In order to perform graceful shutdowns, the [`Server`]
+/// The [`Server`] struct represents a particular `[[server]]` instance from the
+/// config file. It is responsible for accepting new connections and spawning
+/// Tokio tasks to handle them properly, as well as gracefully stopping the
+/// running tasks. In order to perform graceful shutdowns, the [`Server`]
 /// notifies all the running tasks about the shutdown event and waits for their
 /// acknowledgements. The tasks can only send the notification acknowledgement
 /// when they are done processing requests from their assigned connection, which
@@ -104,7 +105,7 @@ impl Server {
     pub fn init(config: config::Server) -> Result<Self, io::Error> {
         let (state, _) = watch::channel(State::Starting);
 
-        let socket = if config.listen.is_ipv4() {
+        let socket = if config.listen.first().unwrap().is_ipv4() {
             TcpSocket::new_v4()?
         } else {
             TcpSocket::new_v6()?
@@ -113,7 +114,7 @@ impl Server {
         #[cfg(not(windows))]
         socket.set_reuseaddr(true)?;
 
-        socket.bind(config.listen)?;
+        socket.bind(*config.listen.first().unwrap())?;
 
         // TODO: Hardcoded backlog, maybe this should be configurable.
         let listener = socket.listen(1024)?;

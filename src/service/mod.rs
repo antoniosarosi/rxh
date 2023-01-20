@@ -57,16 +57,22 @@ impl Service<Request<Incoming>> for Rxh {
         } = *self;
 
         Box::pin(async move {
-            if !request.uri().to_string().starts_with(&config.prefix) {
+            let maybe_pattern = config
+                .patterns
+                .iter()
+                .find(|pattern| request.uri().to_string().starts_with(pattern.uri.as_str()));
+
+            let Some(pattern) = maybe_pattern else {
                 return Ok(LocalResponse::not_found());
-            }
-            match &config.kind {
-                config::Kind::Proxy(proxy) => {
+            };
+
+            match &pattern.action {
+                config::Action::Forward(backends) => {
                     let request = ProxyRequest::new(request, client_addr, server_addr);
-                    proxy::forward(request, proxy.target).await
+                    proxy::forward(request, *backends.first().unwrap()).await
                 }
-                config::Kind::Static(config) => {
-                    Ok(send_file(&request.uri().path()[1..], config).await)
+                config::Action::Serve(directory) => {
+                    Ok(send_file(&request.uri().path()[1..], &directory).await)
                 }
             }
         })

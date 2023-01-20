@@ -1,20 +1,17 @@
 use hyper::header;
 
-use crate::{
-    config,
-    http::response::{BoxBodyResponse, LocalResponse},
-};
+use crate::http::response::{BoxBodyResponse, LocalResponse};
 
 /// Returns an HTTP response whose body is the content of a file. The file
 /// must be located inside the root directory specified by the configuration
 /// and must be readable, otherwise a 404 response is returned.
-pub(super) async fn send_file(path: &str, config: &config::Static) -> BoxBodyResponse {
-    let path = std::path::Path::new(&config.root).join(path);
+pub(super) async fn send_file(path: &str, root: &str) -> BoxBodyResponse {
+    let path = std::path::Path::new(root).join(path);
     println!("Send file {}", path.to_str().unwrap());
 
     if !path
         .canonicalize()
-        .is_ok_and(|path| path.starts_with(&config.root) && path.is_file())
+        .is_ok_and(|path| path.starts_with(root) && path.is_file())
     {
         return LocalResponse::not_found();
     }
