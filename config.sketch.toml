@@ -1,20 +1,24 @@
 [[server]]
 
-kind = "proxy"
-listen = "127.0.0.1:8100"
-target = "127.0.0.1:8080"
+listen = ["127.0.0.1:8100", "192.168.1.2:8100"]
 
-[[server.request.headers]]
+[[server.match]]
 
-forwarded = { extend = true }
+uri = "/api"
 
-[[server.response.headers]]
+forward = [
+    { address = "127.0.01:7070", weight = 2 },
+    { address = "127.0.01:7071", weight = 1 },
+    { address = "127.0.01:7073", weight = 3 },
+]
 
-via = { extend = true }
-server = { override = true, version = true }
+request.headers.forwarded = { extend = true }
+# request.headers.forwarded = { by = "custom_name" }
 
-[[server]]
+response.headers.via = { extend = true }
+response.headers.server = { override = true, version = false }
 
-kind = "static"
-listen = "127.0.0.1:8200"
-root = "/home/user/website"
+[[server.match]]
+
+uri = "/"
+serve = "/website"
