@@ -18,6 +18,8 @@ forward = "127.0.0.1:8080"
 # one defined above, as the configuration file accepts multiple server
 # instances on different ports.
 
+[[server]]
+
 listen = "127.0.0.1:9000"
 serve = "/home/user/website"
 
