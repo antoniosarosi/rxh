@@ -1,4 +1,4 @@
-//! Utilities for creating common response bodies.
+//! Utilities for creating common request and response bodies.
 
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};

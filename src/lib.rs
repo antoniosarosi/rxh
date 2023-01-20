@@ -2,14 +2,16 @@
 #![feature(is_some_and)]
 
 mod http;
-mod master;
-mod notify;
-mod server;
 mod service;
+mod sync;
+mod task;
 
 pub mod config;
 
-pub use master::Master;
-pub use server::{Server, ShutdownState, State};
+pub use task::{
+    master::Master,
+    server::{Server, ShutdownState, State},
+};
 
+/// RXH version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

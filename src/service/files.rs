@@ -1,3 +1,5 @@
+//! Static files server sub-service.
+
 use hyper::header;
 
 use crate::http::response::{BoxBodyResponse, LocalResponse};

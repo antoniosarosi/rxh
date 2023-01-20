@@ -1,3 +1,7 @@
+//! Proxy requests require additional information attached to them such as
+//! the IP address of the client, which we can't obtain using [`hyper::Request`]
+//! alone. We also need to implement different RFCs for request forwarding.
+
 use std::net::SocketAddr;
 
 use http::{Extensions, HeaderMap};

@@ -1,3 +1,6 @@
+//! Types and abstractions for HTTP responses generated on this server or
+//! obtained from an upstream server.
+
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use hyper::{

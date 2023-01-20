@@ -1,3 +1,5 @@
+//! Structs and enums derived from the config file using [`serde`].
+
 mod deser;
 
 use std::net::SocketAddr;
@@ -6,7 +8,23 @@ use deser::one_or_many;
 use serde::{Deserialize, Serialize};
 
 /// This struct represents the entire configuration file, which describes a list
-/// of servers and their particular configuration options.
+/// of servers and their particular configuration options. For example, this
+/// configuration:
+///
+/// ```toml
+/// [[server]]
+///
+/// listen = "127.0.0.1:8000"
+/// forward = "127.0.0.1:8080"
+///
+/// [[server]]
+///
+/// listen = "127.0.0.1:9000"
+/// serve = "/home/user/website"
+/// ```
+///
+/// Should result in a [`Vec`] containing two [`Server`] elements after
+/// deserializing.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     /// List of all servers.
@@ -14,7 +32,32 @@ pub struct Config {
     pub servers: Vec<Server>,
 }
 
-/// Description of a single server in the config file.
+/// Description of a single server instance in the config file. The server
+/// allows a "simple" pattern or multiple patterns. For example:
+///
+/// ```toml
+/// # Simple pattern.
+///
+/// [[server]]
+///
+/// listen = "127.0.0.1:8000"
+/// forward = "127.0.0.1:9000"
+/// uri = "/api"
+///
+/// # Multiple patterns using "match".
+///
+/// [[server]]
+///
+/// listen = "128.0.01:8001"
+///
+/// match = [
+///     { uri = "/front", serve = "/home/website" },
+///     { uri = "/brack", forward = "127.0.0.1:9001" },
+/// ]
+/// ```
+///
+/// This is not provided by [`serde`], see [`deser`] module for implementation
+/// details.
 #[derive(Serialize, Debug, Clone)]
 pub struct Server {
     /// Socket addresses where this server listens.
@@ -26,7 +69,8 @@ pub struct Server {
     pub patterns: Vec<Pattern>,
 }
 
-/// This is a single instance of a `match` in the configuration of a server.
+/// This is a single element of a `match` list in the configuration of a server.
+/// See [`Server`] and [`deser`] module.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Pattern {
     /// URI prefix to match against.

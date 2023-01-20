@@ -1,3 +1,5 @@
+//! Proxy specific sub-service. See also [`crate::http`] module.
+
 use std::net::SocketAddr;
 
 use http_body_util::BodyExt;
@@ -13,7 +15,7 @@ use crate::http::{
 /// by the target server. See [`ProxyRequest`] and [`ProxyResponse`]. If the
 /// client wants to upgrade the connection and the server agrees by sending
 /// a `101` status code, then a TCP tunnel that forwards traffic bidirectionally
-/// is spawned in a new Tokio task.
+/// is spawned in a new Tokio task. See [`tunnel`].
 pub(super) async fn forward(
     mut request: ProxyRequest<Incoming>,
     to: SocketAddr,
@@ -58,7 +60,7 @@ pub(super) async fn forward(
 }
 
 /// TCP tunnel for upgraded connections such as Websockets or any other custom
-/// protocol. This future should be spawned in a [`tokio::task`] as the client
+/// protocol. This future should be spawned in a [`tokio::task`] as the client's
 /// [`hyper::upgrade::Upgraded`] connection won't resolve until we send an
 /// `HTTP 101` response back to the client.
 async fn tunnel(client: OnUpgrade, server: OnUpgrade) {

@@ -7,8 +7,8 @@ use tokio::{
 
 use crate::{
     config,
-    notify::{Notification, Notifier},
     service::Rxh,
+    sync::notify::{Notification, Notifier},
 };
 
 /// The [`Server`] struct represents a particular `[[server]]` instance from the
@@ -100,6 +100,10 @@ impl Server {
     /// `await`ed. We do it this way because we use the port 0 for integration
     /// tests, which allows the OS to pick any available port, but we still want
     /// to know which port the server is using.
+    ///
+    /// For the `replica` parameter see [`super::master::Master`], but basically
+    /// it's a number that indicates which address should this server choose for
+    /// listening, since the config file allows multiple addresses.
     pub fn init(config: config::Server, replica: usize) -> Result<Self, io::Error> {
         let (state, _) = watch::channel(State::Starting);
 
@@ -135,17 +139,20 @@ impl Server {
     }
 
     /// The [`Server`] will poll the given `future` and whenever it completes,
-    /// the graceful shutdown process starts. Normally, this is called with
-    /// [`tokio::signal::ctrl_c`], but it can be any [`Future`], allowing
-    /// customization.
+    /// the graceful shutdown process starts. If only one server is
+    /// instantiated, this could be called with [`tokio::signal::ctrl_c`], but
+    /// it can be any [`Future`] since we need customization for integration
+    /// tests and spawning multiple servers using [`super::master::Master`].
     pub fn shutdown_on(mut self, future: impl Future + Send + 'static) -> Self {
         self.shutdown = Box::pin(async move {
             future.await;
         });
+
         self
     }
 
-    /// Address of the listening socket.
+    /// Address of the listening socket. This is necessary for obtaining the
+    /// actual address in cases port 0 was used.
     pub fn socket_address(&self) -> SocketAddr {
         self.address
     }
@@ -158,7 +165,7 @@ impl Server {
         self.state.subscribe()
     }
 
-    /// This is the entry point, by calling and `awaiting` this function the
+    /// This is the entry point, by calling and `await`ing this function the
     /// server starts to process connections.
     pub async fn run(self) -> Result<(), io::Error> {
         let Self {

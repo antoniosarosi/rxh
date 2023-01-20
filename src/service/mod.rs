@@ -1,3 +1,12 @@
+//! The [`hyper`] library is based on services. Each time we accept a connection
+//! we have to provide an instance of [`hyper::service::Service`] to handle that
+//! connection. This module contains the [`Rxh`] struct which implements
+//! [`hyper::service::Service`] and handles requests based on the configuration
+//! file. The particular configuration for an instance of [`Rxh`] is provided
+//! by a [`crate::server::Server`], and might contain multiple actions such as
+//! "serve files from this directory if the URI starts with /website" or
+//! "forward the request to an upstream server otherwise".
+
 mod files;
 mod proxy;
 

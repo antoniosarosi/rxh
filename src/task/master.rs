@@ -10,7 +10,95 @@ use tokio::sync::{broadcast, watch};
 use crate::{config::Config, Server, ShutdownState, State};
 
 /// The master task is responsible for creating, spawning and shutting down all
-/// the servers described in the configuration file.
+/// the [`Server`] instances described in the configuration file. Both spawning
+/// and shutting down are non-trivial due to all the options that the config
+/// file provides.
+///
+/// # Replicas
+///
+/// The configuration file allows a single server to listen on multiple
+/// IP addresses or ports:
+///
+/// ```toml
+/// [[server]]
+///
+/// listen = ["127.0.0.1:8080", "127.0.0.1:8081"]
+/// forward = "127.0.0.1:9000"
+/// ```
+///
+/// Instead of passing this configuration "as is" to a [`Server`] and
+/// managing multiple listeners within the [`Server`], we create a "replica"
+/// for each listening address. A replica is just another [`Server`] with
+/// the same configuration but a different listening socket. For example,
+/// we could write the TOML above as follows:
+///
+/// ```toml
+/// [[server]]
+///
+/// listen = "127.0.0.1:8080"
+/// forward = "127.0.0.1:9000"
+///
+/// [[server]]
+///
+/// listen = "127.0.0.1:8081"
+/// forward = "127.0.0.1:9000"
+/// ```
+///
+/// By doing this, instead of having a [`Server`] with two listeners we have
+/// two [`Server`] instances with a single listener. This removes one level
+/// of notification forwarding, since in the first case we'd have to send
+/// the shutdown notification to a [`Server`] and then the [`Server`] would
+/// have to notify each one of its listeners, which in turn would have to
+/// notify the tasks handling the requests.
+///
+/// However, if each server has a single listener, it does not need to spawn
+/// additional tasks to run multiple listeners in parallel, which means the
+/// server itself only has to forward the notification to the tasks handling
+/// requests.
+///
+/// Here's a diagram using CTRL-C as the top shutdown event:
+///
+/// ```text
+///                         +--------+
+///                         | CTRL-C |
+///                         +--------+
+///                              |
+///                              | Shutdown event (SIGINT)
+///                              V
+///                         +--------+
+///                         | Master |
+///                         +--------+
+///                              |
+///                              | Forward the signal to each server.
+///                              |
+///               +--------------+--------------+
+///               |                             |
+///               v                             v
+///          +----------+                 +----------+
+///          | Server 1 |                 | Server 2 |
+///          +----------+                 +----------+
+///               |                             |
+///               | This is skipped             |
+///               v                             v
+///          +----------+                 +----------+
+///          | Listener |                 | Listener |
+///          +----------+                 +----------+
+///               |                             |
+///               | Notify request handlers     |
+///               |                             |
+///       +-------+-------+             +-------+-------+
+///       |               |             |               |
+///       v               v             v               v
+/// +----------+   +----------+   +----------+   +----------+
+/// | Task 1.1 |   | Task 1.2 |   | Taks 2.1 |   | Task 2.2 |
+/// +----------+   +----------+   +----------+   +----------+
+/// ```
+///
+/// The server doesn't need to notify the listener because it's not running on
+/// a different [`tokio::task`], which makes things easier. So whenever we
+/// encounter a server in the config that listens on multiple addresses we
+/// simply clone that server multiple times giving each clone a different
+/// listening address. See [`Server`] for more implementation details.
 pub struct Master {
     /// All the servers that the master has spawned.
     servers: Vec<Server>,
@@ -33,90 +121,6 @@ impl Master {
     /// file or in the received `config`. The initialization only acquires and
     /// configures the TCP sockets, but does not listen or accept connections.
     /// See [`Server::init`] for more details.
-    ///
-    /// # Replicas
-    ///
-    /// The configuration file allows a single server to listen on multiple
-    /// IP addresses or ports:
-    ///
-    /// ```toml
-    /// [[server]]
-    ///
-    /// listen = ["127.0.0.1:8080", "127.0.0.1:8081"]
-    /// forward = "127.0.0.1:9000"
-    /// ```
-    ///
-    /// Instead of passing this configuration "as is" to a [`Server`] and
-    /// managing multiple listeners within the [`Server`], we create a "replica"
-    /// for each listening address. A replica is just another [`Server`] with
-    /// the same configuration but a different listening socket. For example,
-    /// we could write the TOML above as follows:
-    ///
-    /// ```toml
-    /// [[server]]
-    ///
-    /// listen = "127.0.0.1:8080"
-    /// forward = "127.0.0.1:9000"
-    ///
-    /// [[server]]
-    ///
-    /// listen = "127.0.0.1:8081"
-    /// forward = "127.0.0.1:9000"
-    /// ```
-    ///
-    /// By doing this, instead of having a [`Server`] with two listeners we have
-    /// two [`Server`] instances with a single listener. This removes one level
-    /// of notification forwarding, since in the first case we'd have to send
-    /// the shutdown notification to a [`Server`] and then the [`Server`] would
-    /// have to notify each one of its listeners, which in turn would have to
-    /// notify the tasks handling the requests.
-    ///
-    /// However, if each server has a single listener, it does not need to spawn
-    /// additional tasks to run multiple listeners in parallel, which means the
-    /// server itself only has to forward the notification to the tasks handling
-    /// requests.
-    ///
-    /// Here's a diagram using CTRL-C as the top shutdown event:
-    ///
-    /// ```text
-    ///                         +--------+
-    ///                         | CTRL-C |
-    ///                         +--------+
-    ///                              |
-    ///                              | Shutdown event (SIGINT)
-    ///                              V
-    ///                         +--------+
-    ///                         | Master |
-    ///                         +--------+
-    ///                              |
-    ///                              | Forward the signal to each server.
-    ///                              |
-    ///               +--------------+--------------+
-    ///               |                             |
-    ///               v                             v
-    ///          +----------+                 +----------+
-    ///          | Server 1 |                 | Server 2 |
-    ///          +----------+                 +----------+
-    ///               |                             |
-    ///               | This is skipped             |
-    ///               v                             v
-    ///          +----------+                 +----------+
-    ///          | Listener |                 | Listener |
-    ///          +----------+                 +----------+
-    ///               |                             |
-    ///               | Notify request handlers     |
-    ///               |                             |
-    ///       +-------+-------+             +-------+-------+
-    ///       |               |             |               |
-    ///       v               v             v               v
-    /// +----------+   +----------+   +----------+   +----------+
-    /// | Task 1.1 |   | Task 1.2 |   | Taks 2.1 |   | Task 2.2 |
-    /// +----------+   +----------+   +----------+   +----------+
-    /// ```
-    ///
-    /// The server doesn't need to notify the listener because since it has only
-    /// one listener, the server itself *is* the listener. See [`Server`] for
-    /// more implementation details.
     pub fn init(config: Config) -> Result<Self, io::Error> {
         let mut servers = Vec::new();
         let mut states = Vec::new();
@@ -140,7 +144,7 @@ impl Master {
     }
 
     /// When `future` is ready, the graceful shutdown process begins. See
-    /// [`Self::init`], [`Server`] and [`crate::notify`].
+    /// [`Master`] definition, [`Server`] and [`crate::sync::notify`].
     pub fn shutdown_on(mut self, future: impl Future + Send + 'static) -> Self {
         self.servers = self
             .servers

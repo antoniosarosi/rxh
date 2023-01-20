@@ -1,28 +1,39 @@
 # RXH
 
 RXH is an HTTP reverse proxy built with [`hyper`](https://github.com/hyperium/hyper)
-and [`tokio`](https://github.com/tokio-rs/tokio) just for fun. For now, the
-configuration file ([`rxh.toml`](rxh.toml)) only accepts this:
+and [`tokio`](https://github.com/tokio-rs/tokio) just for fun. The
+configuration file ([`rxh.toml`](rxh.toml)) accepts this options:
 
 ```toml
-[[server]]
-
-kind = "proxy"
-listen = "127.0.0.1:8100"
-target = "127.0.0.1:8080"
+# Simple proxy example. All requests sent to port 8000 are forwarded to port
+# 8080, including HTTP/1.1 upgrade requests. Upgraded requests will have their
+# dedicated TCP tunnel.
 
 [[server]]
 
-kind = "static"
-listen = "127.0.0.1:8200"
-root = "/home/user/website"
+listen = "127.0.0.1:8000"
+forward = "127.0.0.1:8080"
+
+# Simple static files server example. This server will run in parallel with the
+# one defined above, as the configuration file accepts multiple server
+# instances on different ports.
+
+listen = "127.0.0.1:9000"
+serve = "/home/user/website"
+
+# Complex server example. In this case, the server listens on multiple IP
+# addresses, should load balance requests that start with "/api" between ports
+# 8080 and 8081 and also serves files from a directory.
+
+[[server]]
+
+listen = ["127.0.0.1:8100", "192.168.1.2:8100"]
+
+match = [
+    { uri = "/api", forward = ["127.0.0.1:8080", "127.0.0.1:8081"] },
+    { uri = "/", serve = "/home/user/website" },
+]
 ```
-
-Multiple servers can be configured to run on different ports, each one of them
-with its own configuration. `"proxy"` servers forward data to an upstream server
-whose address is specified by `"target"`. All addresses must include IP and port
-number. On the other hand, `"static"` servers simply serve static files from
-the `"root"` directory, which must be an absolute path.
 
 Start the server using `cargo`:
 
