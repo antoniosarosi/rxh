@@ -1,7 +1,8 @@
 [[server]]
 
 listen = ["127.0.0.1:8100", "127.0.0.1:8200"]
+
 match = [
-    { uri = "/api", serve = "test" },
-    { uri = "/", forward = "127.0.0.1:7000" }
+    { uri = "/api", forward = "127.0.0.1:8080" },
+    { uri = "/", serve = "/home/antonio/Code/Projects/rxh" },
 ]

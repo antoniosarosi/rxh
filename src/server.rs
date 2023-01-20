@@ -16,10 +16,8 @@ use crate::{
 /// Tokio tasks to handle them properly, as well as gracefully stopping the
 /// running tasks. In order to perform graceful shutdowns, the [`Server`]
 /// notifies all the running tasks about the shutdown event and waits for their
-/// acknowledgements. The tasks can only send the notification acknowledgement
-/// when they are done processing requests from their assigned connection, which
-/// causes the process to only exit when all remaining sockets are closed.
-/// Here's a simple diagram describing this process:
+/// acknowledgements. See [`Notifier`] for further details. Here's a simple
+/// diagram describing the process:
 ///
 /// ```text
 ///                     +--------+
@@ -83,7 +81,7 @@ pub enum State {
 }
 
 /// Represents a state in the graceful shutdown process.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ShutdownState {
     /// The server has received the shutdown signal and won't accept more
     /// connections, but it will still process data for currently connected
@@ -102,10 +100,10 @@ impl Server {
     /// `await`ed. We do it this way because we use the port 0 for integration
     /// tests, which allows the OS to pick any available port, but we still want
     /// to know which port the server is using.
-    pub fn init(config: config::Server) -> Result<Self, io::Error> {
+    pub fn init(config: config::Server, replica: usize) -> Result<Self, io::Error> {
         let (state, _) = watch::channel(State::Starting);
 
-        let socket = if config.listen.first().unwrap().is_ipv4() {
+        let socket = if config.listen[replica].is_ipv4() {
             TcpSocket::new_v4()?
         } else {
             TcpSocket::new_v6()?
@@ -114,7 +112,7 @@ impl Server {
         #[cfg(not(windows))]
         socket.set_reuseaddr(true)?;
 
-        socket.bind(*config.listen.first().unwrap())?;
+        socket.bind(config.listen[replica])?;
 
         // TODO: Hardcoded backlog, maybe this should be configurable.
         let listener = socket.listen(1024)?;
@@ -170,6 +168,7 @@ impl Server {
             notifier,
             shutdown,
             address,
+            ..
         } = self;
 
         state.send_replace(State::Listening);
@@ -179,8 +178,6 @@ impl Server {
         // value to avoid actual memory leaks.
         let config = Box::leak(Box::new(config));
 
-        println!("Listening on http://{address}");
-
         tokio::select! {
             result = Self::listen(listener, config, &notifier) => {
                 if let Err(err) = result {
@@ -188,12 +185,11 @@ impl Server {
                 }
             }
             _ = shutdown => {
-                println!("Shutting down");
+                println!("Server at {address} received shutdown signal");
             }
         }
 
         if let Ok(num_tasks) = notifier.send(Notification::Shutdown) {
-            println!("{num_tasks} pending client connections, waiting for them to end...");
             state.send_replace(State::ShuttingDown(ShutdownState::PendingConnections(
                 num_tasks,
             )));

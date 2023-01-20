@@ -41,7 +41,7 @@ async fn reverse_proxy_client() {
 
 #[tokio::test]
 async fn reverse_proxy_client_receives_404_on_bad_prefix() {
-    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target_with_prefix(
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target_with_uri(
         "127.0.0.1:0".parse().unwrap(),
         "/prefix",
     ));
@@ -102,9 +102,8 @@ async fn graceful_shutdown() {
         Ok(Response::new(Full::<Bytes>::from("Hello world")))
     }));
 
-    let (proxy_addr, _, shutdown, mut state) = spawn_reverse_proxy_with_controllers(
-        config::proxy::target_with_prefix(server_addr, "/hello"),
-    );
+    let (proxy_addr, _, shutdown, mut state) =
+        spawn_reverse_proxy_with_controllers(config::proxy::target_with_uri(server_addr, "/hello"));
 
     ping_all(&[server_addr, proxy_addr]).await;
 

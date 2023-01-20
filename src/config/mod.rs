@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// This struct represents the entire configuration file, which describes a list
 /// of servers and their particular configuration options.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     /// List of all servers.
     #[serde(rename = "server")]
@@ -15,7 +15,7 @@ pub struct Config {
 }
 
 /// Description of a single server in the config file.
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct Server {
     /// Socket addresses where this server listens.
     #[serde(deserialize_with = "one_or_many")]
@@ -27,7 +27,7 @@ pub struct Server {
 }
 
 /// This is a single instance of a `match` in the configuration of a server.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Pattern {
     /// URI prefix to match against.
     #[serde(default = "default::uri")]
@@ -39,7 +39,7 @@ pub struct Pattern {
 }
 
 /// Describe what should be done when a request matches a pattern.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
     /// Forward the request to an upstream server or load balance between
