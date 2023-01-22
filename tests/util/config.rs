@@ -8,12 +8,21 @@ pub mod proxy {
         sched::WeightedRoundRobin,
     };
 
-    pub fn target(address: SocketAddr) -> Server {
-        target_with_uri(address, "/")
+    pub fn single_backend(address: SocketAddr) -> Server {
+        single_backend_with_uri(address, "/")
     }
 
-    pub fn target_with_uri(address: SocketAddr, uri: &str) -> Server {
+    pub fn single_backend_with_uri(address: SocketAddr, uri: &str) -> Server {
         let backends = vec![Backend { address, weight: 1 }];
+
+        multiple_weighted_backends_with_uri(backends, uri)
+    }
+
+    pub fn multiple_weighted_backends(backends: Vec<Backend>) -> Server {
+        multiple_weighted_backends_with_uri(backends, "/")
+    }
+
+    pub fn multiple_weighted_backends_with_uri(backends: Vec<Backend>, uri: &str) -> Server {
         let scheduler = Scheduler::Wrr(WeightedRoundRobin::new(&backends));
 
         let forward = Forward {

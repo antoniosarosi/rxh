@@ -3,18 +3,25 @@
 
 mod util;
 
-use std::io;
+use std::{
+    io,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 use bytes::Bytes;
 use http::HeaderValue;
 use http_body_util::{Empty, Full};
 use hyper::{header, service::service_fn, Request, Response};
-use rxh::{ShutdownState, State};
+use rxh::{config::Backend, ShutdownState, State};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::mpsc,
 };
-use util::{
+
+use crate::util::{
     config,
     http::{
         http_client,
@@ -35,7 +42,7 @@ async fn reverse_proxy_client() {
         Ok(Response::new(Full::<Bytes>::from("Hello world")))
     }));
 
-    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target(server_addr));
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::single_backend(server_addr));
 
     ping_all(&[server_addr, proxy_addr]).await;
 
@@ -46,7 +53,7 @@ async fn reverse_proxy_client() {
 
 #[tokio::test]
 async fn reverse_proxy_client_receives_404_on_bad_prefix() {
-    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target_with_uri(
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::single_backend_with_uri(
         "127.0.0.1:0".parse().unwrap(),
         "/prefix",
     ));
@@ -65,7 +72,7 @@ async fn reverse_proxy_client_receives_404_on_bad_prefix() {
 async fn reverse_proxy_client_receives_502_on_backend_server_not_available() {
     let (_, server_socket_addr) = usable_socket();
 
-    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target(server_socket_addr));
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::single_backend(server_socket_addr));
 
     ping_tcp_server(proxy_addr).await;
 
@@ -78,7 +85,7 @@ async fn reverse_proxy_client_receives_502_on_backend_server_not_available() {
 async fn reverse_proxy_backend() {
     let (listener, server_addr) = usable_tcp_listener();
 
-    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target(server_addr));
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::single_backend(server_addr));
 
     let (client_addr, _) = spawn_client(proxy_addr, request::empty());
 
@@ -107,8 +114,9 @@ async fn graceful_shutdown() {
         Ok(Response::new(Full::<Bytes>::from("Hello world")))
     }));
 
-    let (proxy_addr, _, shutdown, mut state) =
-        spawn_reverse_proxy_with_controllers(config::proxy::target_with_uri(server_addr, "/hello"));
+    let (proxy_addr, _, shutdown, mut state) = spawn_reverse_proxy_with_controllers(
+        config::proxy::single_backend_with_uri(server_addr, "/hello"),
+    );
 
     ping_all(&[server_addr, proxy_addr]).await;
 
@@ -185,7 +193,7 @@ async fn upgraded_connection() {
             .unwrap())
     }));
 
-    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target(server_addr));
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::single_backend(server_addr));
 
     ping_all(&[server_addr, proxy_addr]).await;
 
@@ -209,4 +217,56 @@ async fn upgraded_connection() {
     upgraded.shutdown().await.unwrap();
 
     assert_eq!(&buff[0..bytes], b"Test String");
+}
+
+#[tokio::test]
+async fn load_balancing() {
+    let weights = vec![1, 3, 2];
+    let mut num_requests = Vec::new();
+    let mut backends = Vec::new();
+
+    for weight in &weights {
+        let num = Arc::new(AtomicUsize::new(0));
+        num_requests.push(num.clone());
+
+        let (listener, address) = usable_tcp_listener();
+
+        tokio::task::spawn(async move {
+            loop {
+                let num = num.clone();
+                let service = service_fn(move |_| {
+                    num.fetch_add(1, Ordering::Relaxed);
+                    async { Ok(Response::new(Empty::<Bytes>::new())) }
+                });
+                let (stream, _) = listener.accept().await.unwrap();
+                serve_connection(stream, service).await;
+            }
+        });
+
+        backends.push(Backend {
+            address,
+            weight: *weight,
+        });
+    }
+
+    let addresses: Vec<_> = backends.iter().map(|backend| backend.address).collect();
+    let (proxy, _) = spawn_reverse_proxy(config::proxy::multiple_weighted_backends(backends));
+
+    ping_all(&addresses).await;
+    ping_tcp_server(proxy).await;
+
+    let cycles = 10;
+
+    for cycle in 1..=cycles {
+        // Send a burst of requests at once.
+        for _ in 0..weights.iter().sum() {
+            send_http_request(proxy, request::empty()).await;
+        }
+
+        // Check that each backend server has received a number of requests that
+        // matches its weight.
+        for (num, weight) in num_requests.iter().zip(&weights) {
+            assert_eq!(num.load(Ordering::Relaxed), weight * cycle);
+        }
+    }
 }
