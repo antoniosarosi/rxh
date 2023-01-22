@@ -1,8 +1,8 @@
-use std::{future::Future, io, net::SocketAddr, pin::Pin, ptr};
+use std::{future::Future, io, net::SocketAddr, pin::Pin, ptr, sync::Arc};
 
 use tokio::{
     net::{TcpListener, TcpSocket},
-    sync::watch,
+    sync::{watch, Semaphore},
 };
 
 use crate::{
@@ -65,6 +65,10 @@ pub struct Server {
     /// integration tests. When this future completes, the server starts the
     /// shutdown process.
     shutdown: Pin<Box<dyn Future<Output = ()> + Send>>,
+
+    /// Connections are limited to a maximum number. In order to allow a new
+    /// connection we'll have a acquire a permite from the semaphore.
+    connections: Arc<Semaphore>,
 }
 
 /// Represents the current state of the server.
@@ -75,6 +79,9 @@ pub enum State {
 
     /// Server is accepting incoming connections.
     Listening,
+
+    /// Maximum number of connections reached.
+    MaxConnectionsReached(usize),
 
     /// Server is gracefully shutting down.
     ShuttingDown(ShutdownState),
@@ -128,6 +135,8 @@ impl Server {
         // the process.
         let shutdown = Box::pin(std::future::pending());
 
+        let connections = Arc::new(Semaphore::new(config.connections));
+
         Ok(Self {
             state,
             listener,
@@ -135,6 +144,7 @@ impl Server {
             address,
             notifier,
             shutdown,
+            connections,
         })
     }
 
@@ -169,42 +179,55 @@ impl Server {
     /// server starts to process connections.
     pub async fn run(self) -> Result<(), crate::Error> {
         let Self {
-            config,
+            mut config,
             state,
             listener,
             notifier,
             shutdown,
             address,
-            ..
+            connections,
         } = self;
 
-        let name = if let Some(ref id) = config.name {
+        let log_name = if let Some(ref id) = config.name {
             format!("{address} ({id})")
         } else {
             address.to_string()
         };
 
+        config.log_name = log_name.clone();
+
         state.send_replace(State::Listening);
-        println!("{name} => Listening for requests");
+        println!("{log_name} => Listening for requests");
 
         // Leak the configuration to get a 'static lifetime, which we need to
         // spawn tokio tasks. Later when all tasks have finished, we'll drop this
         // value to avoid actual memory leaks.
         let config = Box::leak(Box::new(config));
 
+        let listener = Listener {
+            config,
+            connections,
+            listener,
+            notifier: &notifier,
+            state: &state,
+        };
+
         tokio::select! {
-            result = Self::listen(listener, config, &notifier) => {
+            result = listener.listen() => {
                 if let Err(err) = result {
-                    println!("{name} => Error while accepting connections: {err}");
+                    println!("{log_name} => Error while accepting connections: {err}");
                 }
             }
             _ = shutdown => {
-                println!("{name} => Received shutdown signal");
+                println!("{log_name} => Received shutdown signal");
             }
         }
 
+        // Drop the listener to stop accepting connections
+        drop(listener);
+
         if let Ok(num_tasks) = notifier.send(Notification::Shutdown) {
-            println!("{name} => Can't shutdown yet, {num_tasks} pending connections");
+            println!("{log_name} => Can't shutdown yet, {num_tasks} pending connections");
             state.send_replace(State::ShuttingDown(ShutdownState::PendingConnections(
                 num_tasks,
             )));
@@ -219,21 +242,64 @@ impl Server {
         }
 
         state.send_replace(State::ShuttingDown(ShutdownState::Done));
-        println!("{name} => Shutdown complete");
+        println!("{log_name} => Shutdown complete");
 
         Ok(())
     }
+}
 
-    /// Starts accepting incoming connections and processing HTTP requests.
-    async fn listen(
-        listener: TcpListener,
-        config: &'static config::Server,
-        notifier: &Notifier,
-    ) -> Result<(), crate::Error> {
+/// Listens for incoming connections and spawns tasks to handle them if permits
+/// are available.
+struct Listener<'a> {
+    /// Underlying TCP listener.
+    listener: TcpListener,
+
+    /// Reference to the configuration of this server.
+    config: &'static config::Server,
+
+    /// Needed to obtain subscriptions and pass them down to request handler
+    /// tasks.
+    notifier: &'a Notifier,
+
+    /// Used to update the state when max connections are reached.
+    state: &'a watch::Sender<State>,
+
+    /// Connections permits.
+    connections: Arc<Semaphore>,
+}
+
+impl<'a> Listener<'a> {
+    pub async fn listen(&self) -> Result<(), crate::Error> {
         loop {
-            let (stream, client_addr) = listener.accept().await?;
+            // Move out of config to get a static lifetime that we can pass down
+            // to the new Tokio task.
+            let config = self.config;
+
+            let mut notify_listening_again = false;
+
+            if self.connections.available_permits() == 0 {
+                println!(
+                    "{} => Reached max connections: {}",
+                    config.log_name, config.connections
+                );
+                self.state
+                    .send_replace(State::MaxConnectionsReached(config.connections));
+                notify_listening_again = true;
+            }
+
+            // We don't close the semaphore so unwrapping is OK.
+            let permit = self.connections.clone().acquire_owned().await.unwrap();
+
+            // Once we've obtainied a permite we can start listening again if
+            // we stopped before.
+            if notify_listening_again {
+                println!("{} => Accepting connections again", config.log_name);
+                self.state.send_replace(State::Listening);
+            }
+
+            let (stream, client_addr) = self.listener.accept().await?;
+            let mut subscription = self.notifier.subscribe();
             let server_addr = stream.local_addr()?;
-            let mut subscription = notifier.subscribe();
 
             tokio::task::spawn(async move {
                 if let Err(err) = hyper::server::conn::http1::Builder::new()
@@ -249,6 +315,10 @@ impl Server {
                 if let Some(Notification::Shutdown) = subscription.receive_notification() {
                     subscription.acknowledge_notification().await;
                 }
+
+                // Permit is dropped only when the accepted socket is done
+                // sending and receiving data.
+                drop(permit);
             });
         }
     }

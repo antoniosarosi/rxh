@@ -69,8 +69,16 @@ pub struct Server {
     #[serde(rename = "match")]
     pub patterns: Vec<Pattern>,
 
+    #[serde(default = "default::connections")]
+    pub connections: usize,
+
     /// Optional server name to show in logs and forwarded requests.
     pub name: Option<String>,
+
+    /// Log name inlcudes the IP address of the listening socket and also the
+    /// optional name set by the user.
+    #[serde(skip)]
+    pub log_name: String,
 }
 
 /// This is a single element of a `match` list in the configuration of a server.
@@ -248,5 +256,9 @@ mod default {
 
     pub fn uri() -> String {
         String::from("/")
+    }
+
+    pub fn connections() -> usize {
+        1024
     }
 }

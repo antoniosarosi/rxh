@@ -13,6 +13,7 @@ mod proxy;
 use std::{future::Future, net::SocketAddr, pin::Pin};
 
 use hyper::{body::Incoming, service::Service, Request};
+use tokio::time::Instant;
 
 use crate::{
     config::{self, Action, Forward},
@@ -64,6 +65,8 @@ impl Service<Request<Incoming>> for Rxh {
             config,
         } = *self;
 
+        let instant = Instant::now();
+
         Box::pin(async move {
             let uri = request.uri().to_string();
             let method = request.method().to_string();
@@ -96,7 +99,9 @@ impl Service<Request<Incoming>> for Rxh {
 
             if let Ok(response) = &response {
                 let status = response.status();
-                println!("{client_addr} -> {server_addr} {method} {uri} HTTP {status}");
+                let log_name = &config.log_name;
+                let elapsed = instant.elapsed();
+                println!("{client_addr} -> {log_name} {method} {uri} HTTP {status} {elapsed:?}");
             }
 
             response

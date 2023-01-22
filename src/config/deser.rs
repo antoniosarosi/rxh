@@ -188,6 +188,7 @@ enum Field {
     Serve,
     Uri,
     Name,
+    Connections,
 }
 
 /// Custom errors that can happen while manually deserializing [`Server`].
@@ -279,6 +280,7 @@ impl<'de> Visitor<'de> for ServerVisitor {
         let mut patterns: Vec<Pattern> = vec![];
         let mut simple_pattern: Option<Pattern> = None;
         let mut name = None;
+        let mut connections = super::default::connections();
         let mut uri = super::default::uri();
 
         while let Some(key) = map.next_key()? {
@@ -354,6 +356,8 @@ impl<'de> Visitor<'de> for ServerVisitor {
 
                     name = Some(map.next_value()?);
                 }
+
+                Field::Connections => connections = map.next_value()?,
             }
         }
 
@@ -373,7 +377,9 @@ impl<'de> Visitor<'de> for ServerVisitor {
         Ok(Server {
             listen,
             patterns,
+            connections,
             name,
+            log_name: String::from("unnamed"),
         })
     }
 }

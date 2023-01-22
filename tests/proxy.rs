@@ -174,6 +174,43 @@ async fn graceful_shutdown() {
 }
 
 #[tokio::test]
+async fn limited_connections() {
+    let (server_addr, _) = spawn_backend_server(service_fn(|_| async {
+        Ok(Response::new(Full::<Bytes>::from("Hello world")))
+    }));
+
+    let mut config = config::proxy::single_backend(server_addr);
+
+    // Only two connections.
+    config.connections = 2;
+
+    let (proxy_addr, _, _shutdown, mut state) = spawn_reverse_proxy_with_controllers(config);
+
+    // Wait for listen state.
+    state.changed().await.unwrap();
+    assert_eq!(*state.borrow(), State::Listening);
+
+    let (sock1, _) = usable_socket();
+    let (sock2, _) = usable_socket();
+
+    // Reach max connections.
+    let stream1 = sock1.connect(proxy_addr).await.unwrap();
+    let stream2 = sock2.connect(proxy_addr).await.unwrap();
+
+    // State should have changed.
+    state.changed().await.unwrap();
+    assert_eq!(*state.borrow(), State::MaxConnectionsReached(2));
+
+    // Dropping one stream should put the server in listen mode again.
+    drop(stream1);
+
+    state.changed().await.unwrap();
+    assert_eq!(*state.borrow(), State::Listening);
+
+    drop(stream2);
+}
+
+#[tokio::test]
 async fn upgraded_connection() {
     let (server_addr, _) = spawn_backend_server(service_fn(|req| async {
         tokio::task::spawn(async move {

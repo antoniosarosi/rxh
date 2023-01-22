@@ -42,7 +42,9 @@ pub mod proxy {
 
         Server {
             name: None,
+            log_name: String::from("unnamed"),
             listen: vec!["127.0.0.1:0".parse().unwrap()],
+            connections: 1024,
             patterns: vec![Pattern {
                 uri: String::from(uri),
                 action: Action::Forward(forward),
@@ -65,7 +67,9 @@ pub mod files {
     pub fn serve_at_uri(root: &str, uri: &str) -> Server {
         Server {
             name: None,
+            log_name: String::from("unnamed"),
             listen: vec!["127.0.0.1:0".parse().unwrap()],
+            connections: 1024,
             patterns: vec![Pattern {
                 uri: String::from(uri),
                 action: Action::Serve(String::from(root)),
