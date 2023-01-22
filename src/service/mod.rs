@@ -15,7 +15,7 @@ use std::{future::Future, net::SocketAddr, pin::Pin};
 use hyper::{body::Incoming, service::Service, Request};
 
 use crate::{
-    config,
+    config::{self, Forward},
     http::{
         request::ProxyRequest,
         response::{BoxBodyResponse, LocalResponse},
@@ -75,10 +75,9 @@ impl Service<Request<Incoming>> for Rxh {
             };
 
             match &pattern.action {
-                config::Action::Forward(backends) => {
+                config::Action::Forward(Forward { scheduler, .. }) => {
                     let request = ProxyRequest::new(request, client_addr, server_addr);
-                    // TODO: Load balancing.
-                    proxy::forward(request, *backends.first().unwrap()).await
+                    proxy::forward(request, scheduler.next_server()).await
                 }
                 config::Action::Serve(directory) => {
                     files::transfer(&request.uri().path()[1..], directory).await

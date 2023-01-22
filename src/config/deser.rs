@@ -9,10 +9,10 @@ use serde::{
     Serialize,
 };
 
-use super::{Action, Pattern, Server};
+use super::{Action, Algorithm, Backend, Forward, Pattern, Scheduler, Server};
 
 /// See [`one_or_many`] for details.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 enum OneOrMany<T> {
     One(T),
@@ -50,6 +50,126 @@ where
     D: Deserializer<'de>,
 {
     Ok(OneOrMany::deserialize(deserializer)?.into())
+}
+
+/// Allows specifying the upstream servers in a proxy configuration as a socket
+/// address or an object containing the address and weight.
+///
+/// ```toml
+/// [[server]]
+///
+/// listen = "127.0.0.1:8000"
+///
+/// # As a socket.
+/// forward = ["127.0.0.1:8080", "127.0.0.1:8081"]
+///
+/// [[server]]
+//
+/// listen = "127.0.0.1:8001"
+///
+/// # Weighted servers example.
+/// forward = [
+///     { address = "127.0.0.1:8080", weight = 1 },
+///     { address = "127.0.0.1:8081", weight = 3 },
+/// ]
+/// ```
+#[derive(Serialize, Deserialize, Debug)]
+pub(super) enum BackendOption {
+    Simple(SocketAddr),
+    Weighted { address: SocketAddr, weight: usize },
+}
+
+impl From<BackendOption> for Backend {
+    fn from(value: BackendOption) -> Self {
+        let (address, weight) = match value {
+            BackendOption::Simple(address) => (address, 1),
+            BackendOption::Weighted { address, weight } => (address, weight),
+        };
+
+        Self { address, weight }
+    }
+}
+
+/// Forward can be written as a single socket, list of sockets, list of objects
+/// describing the weight and address of each backend server, or an object
+/// describing the load balancing algorithm and the backend servers. This are
+/// all the legal patterns:
+///
+/// ```toml
+/// [[server]]
+///
+/// listen = "127.0.0.1:8000"
+///
+/// # Single socket.
+/// forward = "127.0.0.1:8080"
+///
+/// [[server]]
+///
+/// listen = "127.0.0.1:8001"
+///
+/// # List of sockets.
+/// forward = ["127.0.0.1:8080", "127.0.0.1:8081"]
+///
+/// [[server]]
+///
+/// listen = "127.0.0.1:8002"
+///
+/// # List of weighted servers.
+/// forward = [
+///     { address = "127.0.0.1:8080", weight = 1 },
+///     { address = "127.0.0.1:8081", weight = 3 },
+/// ]
+///
+/// [[server]]
+///
+/// listen = "127.0.0.1:8003"
+///
+/// # As an object.
+/// [[server.forward]]
+///
+/// algorithm = "WRR"
+/// backends = [
+///     { address = "127.0.0.1:8080", weight = 1 },
+///     { address = "127.0.0.1:8081", weight = 2 },
+/// ]
+#[derive(Serialize, Deserialize, Debug)]
+pub(super) enum ForwardOption {
+    #[serde(deserialize_with = "one_or_many")]
+    Simple(Vec<Backend>),
+    WithAlgorithm {
+        algorithm: Algorithm,
+        backends: Vec<Backend>,
+    },
+}
+
+impl From<ForwardOption> for Forward {
+    fn from(value: ForwardOption) -> Self {
+        let (backends, algorithm) = match value {
+            ForwardOption::Simple(backends) => (backends, Algorithm::Wrr),
+
+            ForwardOption::WithAlgorithm {
+                algorithm,
+                backends,
+            } => (backends, algorithm),
+        };
+
+        let scheduler = Scheduler::from(algorithm, &backends);
+
+        Self {
+            backends,
+            algorithm,
+            scheduler,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Server {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_struct("Server", &["listen", "patterns"], ServerVisitor)
+    }
 }
 
 /// Implements [`Visitor`] to provide us with a custom deserialization of the
@@ -126,24 +246,18 @@ enum Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
+        let message = match self {
             Error::MixedSimpleAndMatch => {
-                f.write_str("either use 'match' for multiple patterns or describe a single pattern")
+                "either use 'match' for multiple patterns or describe a single pattern"
             }
-            Error::MixedActions => f.write_str(
-                "use either 'forward' or 'serve', if you need multiple patterns use 'match'",
-            ),
-            Error::MissingConfig => f.write_str("missing 'match' or simple configuration"),
-        }
-    }
-}
+            Error::MixedActions => {
+                "use either 'forward' or 'serve', if you need multiple patterns use 'match'"
+            }
 
-impl<'de> Deserialize<'de> for Server {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_struct("Server", &["listen", "patterns"], ServerVisitor)
+            Error::MissingConfig => "missing 'match' or simple configuration",
+        };
+
+        f.write_str(message)
     }
 }
 
@@ -199,7 +313,7 @@ impl<'de> Visitor<'de> for ServerVisitor {
 
                     simple_pattern = Some(Pattern {
                         uri: super::default::uri(),
-                        action: Action::Forward(map.next_value::<OneOrMany<SocketAddr>>()?.into()),
+                        action: Action::Forward(map.next_value()?),
                     });
                 }
 

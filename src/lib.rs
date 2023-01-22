@@ -7,6 +7,7 @@ mod sync;
 mod task;
 
 pub mod config;
+pub mod sched;
 
 pub use task::{
     master::Master,
