@@ -4,10 +4,16 @@ use std::{convert::Infallible, net::SocketAddr};
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
-use hyper::{body::Incoming, service::Service, Request, Response};
+use hyper::{
+    body::Incoming,
+    client::conn::http1::SendRequest,
+    service::Service,
+    Request,
+    Response,
+};
 use tokio::{
     self,
-    net::TcpSocket,
+    net::{TcpSocket, TcpStream},
     sync::{oneshot, watch},
     task::JoinHandle,
 };
@@ -75,6 +81,15 @@ pub fn spawn_reverse_proxy_with_controllers(
     (addr, handle, || tx.send(()).unwrap(), state)
 }
 
+/// Provides an HTTP client that spawns a connection object in the background
+/// to manage request transmissions.
+pub async fn http_client<B: AsyncBody>(stream: TcpStream) -> SendRequest<B> {
+    let (sender, conn) = hyper::client::conn::http1::handshake(stream).await.unwrap();
+    tokio::task::spawn(async move { conn.await.unwrap() });
+
+    sender
+}
+
 /// Sends an HTTP request from the given [`TcpSocket`] to the given
 /// [`SocketAddr`].
 pub async fn send_http_request_from<B>(
@@ -86,12 +101,9 @@ where
     B: AsyncBody,
 {
     let stream = from.connect(to).await.unwrap();
-
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(stream).await.unwrap();
-    tokio::task::spawn(async move { conn.await.unwrap() });
+    let mut sender = http_client(stream).await;
 
     let (parts, body) = sender.send_request(req).await.unwrap().into_parts();
-
     (parts, body.collect().await.unwrap().to_bytes())
 }
 

@@ -6,13 +6,18 @@ mod util;
 use std::io;
 
 use bytes::Bytes;
-use http_body_util::Full;
-use hyper::{header, service::service_fn, Response};
+use http::HeaderValue;
+use http_body_util::{Empty, Full};
+use hyper::{header, service::service_fn, Request, Response};
 use rxh::{ShutdownState, State};
-use tokio::sync::mpsc;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::mpsc,
+};
 use util::{
     config,
     http::{
+        http_client,
         request,
         send_http_request,
         spawn_backend_server,
@@ -160,4 +165,48 @@ async fn graceful_shutdown() {
     // Finally, after the streams above are dropped, server should be down.
     state.changed().await.unwrap();
     assert_eq!(*state.borrow(), State::ShuttingDown(ShutdownState::Done));
+}
+
+#[tokio::test]
+async fn upgraded_connection() {
+    let (server_addr, _) = spawn_backend_server(service_fn(|req| async {
+        tokio::task::spawn(async move {
+            let mut upgraded = hyper::upgrade::on(req).await.unwrap();
+            let mut buff = [0; 1024];
+            let bytes = upgraded.read(&mut buff).await.unwrap();
+            upgraded.write_all(&buff[0..bytes]).await.unwrap();
+            upgraded.shutdown().await.unwrap();
+        });
+
+        Ok(Response::builder()
+            .status(http::StatusCode::SWITCHING_PROTOCOLS)
+            .header(header::UPGRADE, HeaderValue::from_static("testproto"))
+            .body(Empty::<Bytes>::new())
+            .unwrap())
+    }));
+
+    let (proxy_addr, _) = spawn_reverse_proxy(config::proxy::target(server_addr));
+
+    ping_all(&[server_addr, proxy_addr]).await;
+
+    let (socket, _) = usable_socket();
+    let stream = socket.connect(proxy_addr).await.unwrap();
+    let mut sender = http_client(stream).await;
+
+    let req = Request::builder()
+        .header(header::CONNECTION, HeaderValue::from_static("upgrade"))
+        .header(header::UPGRADE, HeaderValue::from_static("testproto"))
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+
+    let res = sender.send_request(req).await.unwrap();
+
+    let mut upgraded = hyper::upgrade::on(res).await.unwrap();
+    upgraded.write(b"Test String").await.unwrap();
+
+    let mut buff = [0; 1024];
+    let bytes = upgraded.read(&mut buff).await.unwrap();
+    upgraded.shutdown().await.unwrap();
+
+    assert_eq!(&buff[0..bytes], b"Test String");
 }

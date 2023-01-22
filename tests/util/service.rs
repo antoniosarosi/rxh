@@ -59,6 +59,7 @@ where
         .preserve_header_case(true)
         .title_case_headers(true)
         .serve_connection(stream, service)
+        .with_upgrades()
         .await
         .unwrap();
 }
