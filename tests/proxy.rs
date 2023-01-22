@@ -1,3 +1,5 @@
+//! RXH proxy integration tests.
+
 #![feature(associated_type_bounds)]
 #![feature(trait_alias)]
 
@@ -239,4 +241,37 @@ async fn load_balancing() {
             assert_eq!(num.load(Ordering::Relaxed), weight * cycle);
         }
     }
+}
+
+#[tokio::test]
+async fn serve_files() {
+    let html = r#"
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta http-equiv="X-UA-Compatible" content="IE=edge">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Test</title>
+        </head>
+        <body>
+            <p>Hello World</p>
+        </body>
+        </html>
+    "#;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut file = tokio::fs::File::create(dir.path().join("index.html"))
+        .await
+        .unwrap();
+    file.write(html.as_bytes()).await.unwrap();
+
+    let (addr, _) = spawn_reverse_proxy(config::files::serve(dir.path().to_str().unwrap()));
+
+    ping_tcp_server(addr).await;
+
+    let (parts, body) = send_http_request(addr, request::empty_with_uri("/index.html")).await;
+
+    assert_eq!(parts.status, http::StatusCode::OK);
+    assert_eq!(body, html.as_bytes());
 }
