@@ -200,6 +200,11 @@ impl Master {
 
         first_error.unwrap_or(Ok(()))
     }
+
+    /// Returns all the listening sockets.
+    pub fn sockets(&self) -> Vec<SocketAddr> {
+        self.states.iter().map(|(addr, _)| *addr).collect()
+    }
 }
 
 async fn log_state_updates(addr: SocketAddr, mut state: watch::Receiver<State>) {

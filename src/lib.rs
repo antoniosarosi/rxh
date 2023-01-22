@@ -1,3 +1,5 @@
+//! RXH is a reverse proxy, load balancer and static files server.
+
 #![feature(ptr_from_ref)]
 #![feature(is_some_and)]
 

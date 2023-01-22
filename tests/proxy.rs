@@ -26,6 +26,7 @@ use crate::util::{
         spawn_backend_server,
         spawn_backends_with_request_counters,
         spawn_client,
+        spawn_master,
         spawn_reverse_proxy,
         spawn_reverse_proxy_with_controllers,
     },
@@ -244,7 +245,7 @@ async fn load_balancing() {
 }
 
 #[tokio::test]
-async fn serve_files() {
+async fn static_files() {
     let html = r#"
         <!DOCTYPE html>
         <html lang="en">
@@ -274,4 +275,52 @@ async fn serve_files() {
 
     assert_eq!(parts.status, http::StatusCode::OK);
     assert_eq!(body, html.as_bytes());
+}
+
+#[tokio::test]
+async fn client_receives_404_if_file_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let (addr, _) = spawn_reverse_proxy(config::files::serve(dir.path().to_str().unwrap()));
+
+    ping_tcp_server(addr).await;
+
+    let doesnt_exist = ["/test.html", "/styles.css", "/app.js"];
+
+    for file in doesnt_exist {
+        let (parts, body) = send_http_request(addr, request::empty_with_uri(file)).await;
+        assert_eq!(parts.status, http::StatusCode::NOT_FOUND);
+        assert!(body.starts_with(b"HTTP 404 NOT FOUND"));
+    }
+}
+
+#[tokio::test]
+async fn multi_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut file = tokio::fs::File::create(dir.path().join("test.txt"))
+        .await
+        .unwrap();
+    file.write(b"Hello World File").await.unwrap();
+
+    let (server_addr, _) = spawn_backend_server(service_fn(|_| async {
+        Ok(Response::new(Full::<Bytes>::from("Hello World Response")))
+    }));
+
+    let config = rxh::config::Config {
+        servers: vec![
+            config::proxy::single_backend_with_uri(server_addr, "/api"),
+            config::files::serve(dir.path().to_str().unwrap()),
+        ],
+    };
+
+    let (sockets, _) = spawn_master(config);
+
+    ping_all(&sockets).await;
+
+    let (_, api_req_body) = send_http_request(sockets[0], request::empty_with_uri("/api")).await;
+    let (_, file_req_body) =
+        send_http_request(sockets[1], request::empty_with_uri("/test.txt")).await;
+
+    assert_eq!(api_req_body, &"Hello World Response");
+    assert_eq!(file_req_body, &"Hello World File");
 }

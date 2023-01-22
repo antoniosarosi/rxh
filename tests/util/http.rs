@@ -107,7 +107,8 @@ pub fn spawn_reverse_proxy(config: rxh::config::Server) -> (SocketAddr, JoinHand
     (addr, handle)
 }
 
-/// Starts an RXH reverse proxy server in the background with the given config.
+/// Starts an RXH reverse proxy server in the background with the given config
+/// and provides access to shutdown trigger and state updates.
 pub fn spawn_reverse_proxy_with_controllers(
     config: rxh::config::Server,
 ) -> (
@@ -128,6 +129,18 @@ pub fn spawn_reverse_proxy_with_controllers(
     });
 
     (addr, handle, || tx.send(()).unwrap(), state)
+}
+
+/// Launches a master task in the background. TODO: Provide shutdown trigger
+/// like [`spawn_reverse_proxy_with_controllers`].
+pub fn spawn_master(config: rxh::config::Config) -> (Vec<SocketAddr>, JoinHandle<()>) {
+    let master = rxh::Master::init(config).unwrap();
+    let sockets = master.sockets();
+    let handle = tokio::task::spawn(async move {
+        master.run().await.unwrap();
+    });
+
+    (sockets, handle)
 }
 
 /// Provides an HTTP client that spawns a connection object in the background
@@ -156,6 +169,7 @@ where
     (parts, body.collect().await.unwrap().to_bytes())
 }
 
+/// Sends an HTTP request from a random socket to the given address.
 pub async fn send_http_request<B>(to: SocketAddr, req: Request<B>) -> (http::response::Parts, Bytes)
 where
     B: AsyncBody,
