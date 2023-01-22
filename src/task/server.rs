@@ -223,7 +223,10 @@ impl Server {
             }
         }
 
-        // Drop the listener to stop accepting connections
+        // Drop the listener to stop accepting new connections. This will cause
+        // a "Connection Refused" error on any new client socket that attempts
+        // to connect. Already connected sockets will still be able to send and
+        // receive data.
         drop(listener);
 
         if let Ok(num_tasks) = notifier.send(Notification::Shutdown) {
@@ -234,9 +237,11 @@ impl Server {
             notifier.collect_acknowledgements().await;
         }
 
-        // SAFETY: Nobody is reading this configuration anymore because all tasks
-        // have ended at this point, so there are no more references to this
-        // address. It's an ugly hack, but we don't have to use Arc if we do this.
+        // SAFETY: Nobody is reading this configuration anymore because all
+        // tasks have ended at this point, so there are no more references to
+        // this address. It's an ugly hack, but we don't have to use Arc if we
+        // do this, we can simply skip the reference counting and avoid atomic
+        // operations.
         unsafe {
             drop(Box::from_raw(ptr::from_ref(config).cast_mut()));
         }
@@ -251,7 +256,9 @@ impl Server {
 /// Listens for incoming connections and spawns tasks to handle them if permits
 /// are available.
 struct Listener<'a> {
-    /// Underlying TCP listener.
+    /// Underlying TCP listener. We take ownership of this so that when this
+    /// struct is dropped the socket is also dropped and we stop accepting
+    /// connections.
     listener: TcpListener,
 
     /// Reference to the configuration of this server.
