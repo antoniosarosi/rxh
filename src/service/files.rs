@@ -6,10 +6,10 @@ use crate::http::response::{BoxBodyResponse, LocalResponse};
 
 /// Returns an HTTP response whose body is the content of a file. The file
 /// must be located inside the root directory specified by the configuration
-/// and must be readable, otherwise a 404 response is returned.
+/// and must be readable, otherwise a 404 response is returned. This function
+/// also assumes that `path` is relative, so it can't start with "/".
 pub(super) async fn transfer(path: &str, root: &str) -> Result<BoxBodyResponse, hyper::Error> {
     let path = std::path::Path::new(root).join(path);
-    println!("Send file {}", path.to_str().unwrap());
 
     if !path
         .canonicalize()

@@ -20,15 +20,25 @@ pub(crate) struct ProxyRequest<T> {
 
     /// Local socket currently handling this request.
     server_addr: SocketAddr,
+
+    /// Optional ID to use in the "by" parameter of the "Forwarded" header
+    /// instead of the IP address.
+    proxy_id: Option<String>,
 }
 
 impl<T> ProxyRequest<T> {
     /// Creates a new [`ProxyRequest`].
-    pub fn new(request: Request<T>, client_addr: SocketAddr, server_addr: SocketAddr) -> Self {
+    pub fn new(
+        request: Request<T>,
+        client_addr: SocketAddr,
+        server_addr: SocketAddr,
+        proxy_id: Option<String>,
+    ) -> Self {
         Self {
             request,
             client_addr,
             server_addr,
+            proxy_id,
         }
     }
 
@@ -116,11 +126,10 @@ impl<T> ProxyRequest<T> {
             self.server_addr.to_string()
         };
 
+        let by = self.proxy_id.unwrap_or(self.server_addr.to_string());
+
         // TODO: Proto
-        let mut forwarded = format!(
-            "for={};by={};host={}",
-            self.client_addr, self.server_addr, host
-        );
+        let mut forwarded = format!("for={};by={};host={}", self.client_addr, by, host);
 
         if let Some(value) = self.request.headers().get(header::FORWARDED) {
             if let Ok(previous_proxies) = value.to_str() {
@@ -141,6 +150,17 @@ impl<T> ProxyRequest<T> {
 mod tests {
     use super::*;
 
+    fn forwarded_header<T>(request: &Request<T>) -> String {
+        let forwarded = request
+            .headers()
+            .get(header::FORWARDED)
+            .unwrap()
+            .to_str()
+            .unwrap();
+
+        String::from(forwarded)
+    }
+
     #[test]
     fn forwarded_request() {
         let client = "127.0.0.1:8000".parse().unwrap();
@@ -150,20 +170,33 @@ mod tests {
             Request::builder().body(crate::http::body::empty()).unwrap(),
             client,
             proxy,
+            None,
         );
 
         let forwarded = request.into_forwarded();
         let expected = format!("for={client};by={proxy};host={proxy}");
 
         assert!(forwarded.headers().contains_key(header::FORWARDED));
-        assert_eq!(
-            forwarded
-                .headers()
-                .get(header::FORWARDED)
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            expected.as_str()
+        assert_eq!(forwarded_header(&forwarded), expected.as_str());
+    }
+
+    #[test]
+    fn forwarded_request_with_proxy_id() {
+        let client = "127.0.0.1:8000".parse().unwrap();
+        let proxy = "127.0.0.1:9000".parse().unwrap();
+        let proxy_id = String::from("rxh/main");
+
+        let request = ProxyRequest::new(
+            Request::builder().body(crate::http::body::empty()).unwrap(),
+            client,
+            proxy,
+            Some(proxy_id.clone()),
         );
+
+        let forwarded = request.into_forwarded();
+        let expected = format!("for={client};by={proxy_id};host={proxy}");
+
+        assert!(forwarded.headers().contains_key(header::FORWARDED));
+        assert_eq!(forwarded_header(&forwarded), expected.as_str());
     }
 }

@@ -7,7 +7,7 @@ use std::{
 
 use tokio::sync::{broadcast, watch};
 
-use crate::{config::Config, Server, ShutdownState, State};
+use crate::{config::Config, Server, State};
 
 /// The master task is responsible for creating, spawning and shutting down all
 /// the [`Server`] instances described in the configuration file. Both spawning
@@ -171,10 +171,6 @@ impl Master {
             set.spawn(server.run());
         }
 
-        for (addr, state) in self.states {
-            tokio::task::spawn(log_state_updates(addr, state));
-        }
-
         let mut first_error = None;
 
         tokio::select! {
@@ -204,28 +200,5 @@ impl Master {
     /// Returns all the listening sockets.
     pub fn sockets(&self) -> Vec<SocketAddr> {
         self.states.iter().map(|(addr, _)| *addr).collect()
-    }
-}
-
-async fn log_state_updates(addr: SocketAddr, mut state: watch::Receiver<State>) {
-    loop {
-        if let Err(_) = state.changed().await {
-            println!("Could not receive state update from server at {addr}");
-            break;
-        }
-
-        match *state.borrow() {
-            State::Starting => println!("Server at {addr} is starting"),
-            State::Listening => println!("Server at {addr} is listening"),
-            State::ShuttingDown(shutdown) => match shutdown {
-                ShutdownState::Done => {
-                    println!("Server at {addr} is down");
-                    break;
-                }
-                ShutdownState::PendingConnections(n) => {
-                    println!("Server at {addr} has {n} pending connections")
-                }
-            },
-        }
     }
 }

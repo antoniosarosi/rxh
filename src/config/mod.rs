@@ -68,6 +68,9 @@ pub struct Server {
     /// Patterns that this server should match against.
     #[serde(rename = "match")]
     pub patterns: Vec<Pattern>,
+
+    /// Optional server name to show in logs and forwarded requests.
+    pub name: Option<String>,
 }
 
 /// This is a single element of a `match` list in the configuration of a server.

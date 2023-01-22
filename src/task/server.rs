@@ -178,7 +178,14 @@ impl Server {
             ..
         } = self;
 
+        let name = if let Some(ref id) = config.name {
+            format!("{address} ({id})")
+        } else {
+            address.to_string()
+        };
+
         state.send_replace(State::Listening);
+        println!("{name} => Listening for requests");
 
         // Leak the configuration to get a 'static lifetime, which we need to
         // spawn tokio tasks. Later when all tasks have finished, we'll drop this
@@ -188,15 +195,16 @@ impl Server {
         tokio::select! {
             result = Self::listen(listener, config, &notifier) => {
                 if let Err(err) = result {
-                    println!("Error while accepting connections: {err}");
+                    println!("{name} => Error while accepting connections: {err}");
                 }
             }
             _ = shutdown => {
-                println!("Server at {address} received shutdown signal");
+                println!("{name} => Received shutdown signal");
             }
         }
 
         if let Ok(num_tasks) = notifier.send(Notification::Shutdown) {
+            println!("{name} => Can't shutdown yet, {num_tasks} pending connections");
             state.send_replace(State::ShuttingDown(ShutdownState::PendingConnections(
                 num_tasks,
             )));
@@ -211,6 +219,7 @@ impl Server {
         }
 
         state.send_replace(State::ShuttingDown(ShutdownState::Done));
+        println!("{name} => Shutdown complete");
 
         Ok(())
     }
@@ -225,7 +234,6 @@ impl Server {
             let (stream, client_addr) = listener.accept().await?;
             let server_addr = stream.local_addr()?;
             let mut subscription = notifier.subscribe();
-            println!("Connection from {client_addr}");
 
             tokio::task::spawn(async move {
                 if let Err(err) = hyper::server::conn::http1::Builder::new()

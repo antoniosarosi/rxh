@@ -187,6 +187,7 @@ enum Field {
     Forward,
     Serve,
     Uri,
+    Name,
 }
 
 /// Custom errors that can happen while manually deserializing [`Server`].
@@ -277,6 +278,7 @@ impl<'de> Visitor<'de> for ServerVisitor {
         let mut listen: Vec<SocketAddr> = vec![];
         let mut patterns: Vec<Pattern> = vec![];
         let mut simple_pattern: Option<Pattern> = None;
+        let mut name = None;
         let mut uri = super::default::uri();
 
         while let Some(key) = map.next_key()? {
@@ -344,6 +346,14 @@ impl<'de> Visitor<'de> for ServerVisitor {
 
                     uri = map.next_value()?;
                 }
+
+                Field::Name => {
+                    if name.is_some() {
+                        return Err(de::Error::duplicate_field("name"));
+                    }
+
+                    name = Some(map.next_value()?);
+                }
             }
         }
 
@@ -360,6 +370,10 @@ impl<'de> Visitor<'de> for ServerVisitor {
             return Err(de::Error::missing_field("listen"));
         }
 
-        Ok(Server { listen, patterns })
+        Ok(Server {
+            listen,
+            patterns,
+            name,
+        })
     }
 }

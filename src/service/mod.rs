@@ -15,7 +15,7 @@ use std::{future::Future, net::SocketAddr, pin::Pin};
 use hyper::{body::Incoming, service::Service, Request};
 
 use crate::{
-    config::{self, Forward},
+    config::{self, Action, Forward},
     http::{
         request::ProxyRequest,
         response::{BoxBodyResponse, LocalResponse},
@@ -65,24 +65,41 @@ impl Service<Request<Incoming>> for Rxh {
         } = *self;
 
         Box::pin(async move {
+            let uri = request.uri().to_string();
+            let method = request.method().to_string();
+
             let maybe_pattern = config
                 .patterns
                 .iter()
-                .find(|pattern| request.uri().to_string().starts_with(pattern.uri.as_str()));
+                .find(|pattern| uri.starts_with(pattern.uri.as_str()));
 
             let Some(pattern) = maybe_pattern else {
                 return Ok(LocalResponse::not_found());
             };
 
-            match &pattern.action {
-                config::Action::Forward(Forward { scheduler, .. }) => {
-                    let request = ProxyRequest::new(request, client_addr, server_addr);
+            let response = match &pattern.action {
+                Action::Forward(Forward { scheduler, .. }) => {
+                    let by = config.name.as_ref().map(|name| name.clone());
+                    let request = ProxyRequest::new(request, client_addr, server_addr, by);
                     proxy::forward(request, scheduler.next_server()).await
                 }
-                config::Action::Serve(directory) => {
-                    files::transfer(&request.uri().path()[1..], directory).await
+
+                Action::Serve(directory) => {
+                    let path = if request.uri().path().starts_with("/") {
+                        &request.uri().path()[1..]
+                    } else {
+                        request.uri().path()
+                    };
+                    files::transfer(path, directory).await
                 }
+            };
+
+            if let Ok(response) = &response {
+                let status = response.status();
+                println!("{client_addr} -> {server_addr} {method} {uri} HTTP {status}");
             }
+
+            response
         })
     }
 }
