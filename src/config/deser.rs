@@ -19,9 +19,9 @@ enum OneOrMany<T> {
     Many(Vec<T>),
 }
 
-impl<T> Into<Vec<T>> for OneOrMany<T> {
-    fn into(self) -> Vec<T> {
-        match self {
+impl<T> From<OneOrMany<T>> for Vec<T> {
+    fn from(value: OneOrMany<T>) -> Self {
+        match value {
             OneOrMany::One(item) => vec![item],
             OneOrMany::Many(items) => items,
         }
@@ -74,6 +74,7 @@ where
 /// ]
 /// ```
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
 pub(super) enum BackendOption {
     Simple(SocketAddr),
     Weighted { address: SocketAddr, weight: usize },
@@ -133,6 +134,7 @@ impl From<BackendOption> for Backend {
 ///     { address = "127.0.0.1:8081", weight = 2 },
 /// ]
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
 pub(super) enum ForwardOption {
     #[serde(deserialize_with = "one_or_many")]
     Simple(Vec<Backend>),
