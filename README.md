@@ -35,7 +35,27 @@ match = [
     { uri = "/api", forward = ["127.0.0.1:8080", "127.0.0.1:8081"] },
     { uri = "/", serve = "/home/user/website" },
 ]
+
+# Weighted load balancing example using WRR (Weighted Round Robin) algorithm.
+# With this configuration, from every 6 requests received by the proxy at port
+# 8200, 1 will be forwarded to port 8080, 3 of them will be forwarded to port
+# 8081 and 2 of them to port 8082.
+
+[[server]]
+
+listen = ["127.0.0.1:8200", "192.168.1.2:8200"]
+
+[[server.forward]]
+
+algorithm = "WRR" # This is the default, and this is also the only one for now.
+
+backends = [
+    { address = "127.0.0.1:8080", weight = 1 },
+    { address = "127.0.0.1:8081", weight = 3 },
+    { address = "127.0.0.1:8082", weight = 2 },
+]
 ```
+
 
 Start the server using `cargo`:
 
@@ -55,6 +75,6 @@ cargo run
 - [ ] Header customization configs (see [`config.sketch.toml`](config.sketch.toml)).
 - [ ] Hot reloading (switch the config on the fly without stopping).
 - [ ] Cache.
-- [ ] Load balancing.
+- [x] Load balancing.
 - [ ] Dameonize process.
 - [ ] TLS.
