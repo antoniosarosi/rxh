@@ -1,6 +1,5 @@
 use std::{
     future::{self, Future},
-    io,
     net::SocketAddr,
     pin::Pin,
 };
@@ -121,7 +120,7 @@ impl Master {
     /// file or in the received `config`. The initialization only acquires and
     /// configures the TCP sockets, but does not listen or accept connections.
     /// See [`Server::init`] for more details.
-    pub fn init(config: Config) -> Result<Self, io::Error> {
+    pub fn init(config: Config) -> Result<Self, crate::Error> {
         let mut servers = Vec::new();
         let mut states = Vec::new();
         let shutdown = Box::pin(future::pending());
@@ -164,7 +163,7 @@ impl Master {
 
     /// All the servers are put into `listen` mode and they start accepting
     /// connections.
-    pub async fn run(self) -> Result<(), io::Error> {
+    pub async fn run(self) -> Result<(), crate::Error> {
         let mut set = tokio::task::JoinSet::new();
 
         for server in self.servers {
@@ -175,14 +174,14 @@ impl Master {
 
         tokio::select! {
             Some(Ok(Err(err))) = set.join_next() => {
-                first_error = Some(Err(err));
-                println!("Received error while waiting for shutdown");
+                first_error = Some(err);
+                println!("Master => Received error while waiting for shutdown");
             }
 
             // TODO: Check for first join error. That means a server has panicked.
 
             _ = self.shutdown => {
-                println!("Sending shutdown signal to all servers");
+                println!("Master => Sending shutdown signal to all servers");
             }
         }
 
@@ -190,11 +189,14 @@ impl Master {
 
         while let Some(result) = set.join_next().await {
             if let Err(err) = result.unwrap() {
-                first_error.get_or_insert(Err(err));
+                first_error.get_or_insert(err);
             }
         }
 
-        first_error.unwrap_or(Ok(()))
+        match first_error {
+            None => Ok(()),
+            Some(err) => Err(crate::Error::from(err)),
+        }
     }
 
     /// Returns all the listening sockets.

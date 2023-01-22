@@ -167,7 +167,7 @@ impl Server {
 
     /// This is the entry point, by calling and `await`ing this function the
     /// server starts to process connections.
-    pub async fn run(self) -> Result<(), io::Error> {
+    pub async fn run(self) -> Result<(), crate::Error> {
         let Self {
             config,
             state,
@@ -229,7 +229,7 @@ impl Server {
         listener: TcpListener,
         config: &'static config::Server,
         notifier: &Notifier,
-    ) -> Result<(), io::Error> {
+    ) -> Result<(), crate::Error> {
         loop {
             let (stream, client_addr) = listener.accept().await?;
             let server_addr = stream.local_addr()?;
