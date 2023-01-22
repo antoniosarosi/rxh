@@ -1,16 +1,24 @@
 //! HTTP utilities for integrations tests.
 
-use std::{convert::Infallible, net::SocketAddr};
+use std::{
+    convert::Infallible,
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 use bytes::Bytes;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Empty};
 use hyper::{
     body::Incoming,
     client::conn::http1::SendRequest,
-    service::Service,
+    service::{service_fn, Service},
     Request,
     Response,
 };
+use rxh::config::Backend;
 use tokio::{
     self,
     net::{TcpSocket, TcpStream},
@@ -43,6 +51,47 @@ where
     });
 
     (addr, handle)
+}
+
+/// Starts a new backend server in the background that counts the amount of
+/// requests it receives. This is useful for testing load balancers.
+pub fn spawn_backend_server_with_request_counter(weight: usize) -> (Backend, Arc<AtomicUsize>) {
+    let request_counter = Arc::new(AtomicUsize::new(0));
+    let owned_request_counter = request_counter.clone();
+
+    let (listener, address) = usable_tcp_listener();
+    let backend = Backend { address, weight };
+
+    tokio::task::spawn(async move {
+        loop {
+            let request_counter = request_counter.clone();
+            let service = service_fn(move |_| {
+                request_counter.fetch_add(1, Ordering::Relaxed);
+                async { Ok(Response::new(Empty::<Bytes>::new())) }
+            });
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_connection(stream, service).await;
+        }
+    });
+
+    (backend, owned_request_counter)
+}
+
+/// Same as [`spawn_backend_server_with_request_counter`] but spawns multiple
+/// backends.
+pub fn spawn_backends_with_request_counters(
+    weights: &[usize],
+) -> (Vec<Backend>, Vec<Arc<AtomicUsize>>) {
+    let mut backends = Vec::new();
+    let mut request_counters = Vec::new();
+
+    for weight in weights {
+        let (backend, request_counter) = spawn_backend_server_with_request_counter(*weight);
+        backends.push(backend);
+        request_counters.push(request_counter);
+    }
+
+    (backends, request_counters)
 }
 
 /// Starts an RXH reverse proxy server in the background with the given config.

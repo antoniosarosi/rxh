@@ -3,19 +3,13 @@
 
 mod util;
 
-use std::{
-    io,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
+use std::{io, sync::atomic::Ordering};
 
 use bytes::Bytes;
 use http::HeaderValue;
 use http_body_util::{Empty, Full};
 use hyper::{header, service::service_fn, Request, Response};
-use rxh::{config::Backend, ShutdownState, State};
+use rxh::{ShutdownState, State};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::mpsc,
@@ -28,6 +22,7 @@ use crate::util::{
         request,
         send_http_request,
         spawn_backend_server,
+        spawn_backends_with_request_counters,
         spawn_client,
         spawn_reverse_proxy,
         spawn_reverse_proxy_with_controllers,
@@ -222,37 +217,12 @@ async fn upgraded_connection() {
 #[tokio::test]
 async fn load_balancing() {
     let weights = vec![1, 3, 2];
-    let mut num_requests = Vec::new();
-    let mut backends = Vec::new();
+    let (backends, request_counters) = spawn_backends_with_request_counters(&weights);
 
-    for weight in &weights {
-        let num = Arc::new(AtomicUsize::new(0));
-        num_requests.push(num.clone());
-
-        let (listener, address) = usable_tcp_listener();
-
-        tokio::task::spawn(async move {
-            loop {
-                let num = num.clone();
-                let service = service_fn(move |_| {
-                    num.fetch_add(1, Ordering::Relaxed);
-                    async { Ok(Response::new(Empty::<Bytes>::new())) }
-                });
-                let (stream, _) = listener.accept().await.unwrap();
-                serve_connection(stream, service).await;
-            }
-        });
-
-        backends.push(Backend {
-            address,
-            weight: *weight,
-        });
-    }
-
-    let addresses: Vec<_> = backends.iter().map(|backend| backend.address).collect();
+    let servers: Vec<_> = backends.iter().map(|backend| backend.address).collect();
     let (proxy, _) = spawn_reverse_proxy(config::proxy::multiple_weighted_backends(backends));
 
-    ping_all(&addresses).await;
+    ping_all(&servers).await;
     ping_tcp_server(proxy).await;
 
     let cycles = 10;
@@ -265,7 +235,7 @@ async fn load_balancing() {
 
         // Check that each backend server has received a number of requests that
         // matches its weight.
-        for (num, weight) in num_requests.iter().zip(&weights) {
+        for (num, weight) in request_counters.iter().zip(&weights) {
             assert_eq!(num.load(Ordering::Relaxed), weight * cycle);
         }
     }
