@@ -24,8 +24,10 @@ impl<T> Ring<T> {
     /// the getter functions is going to be located at index 0 in `values` vec.
     /// Subsequent calls to any getter will return the value at the next index
     /// until the last one is reached, after that it starts again from the
-    /// beginning.
+    /// beginning. Note that `values` must have a length greater than 0, in
+    /// other words it cannot be an empty [`Vec`].
     pub fn new(values: Vec<T>) -> Self {
+        assert!(values.len() > 0, "Ring<T> doesn't work with empty Vec<T>");
         Self {
             values,
             next: AtomicUsize::new(0),
