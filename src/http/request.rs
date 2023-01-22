@@ -136,3 +136,34 @@ impl<T> ProxyRequest<T> {
         self.request
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forwarded_request() {
+        let client = "127.0.0.1:8000".parse().unwrap();
+        let proxy = "127.0.0.1:9000".parse().unwrap();
+
+        let request = ProxyRequest::new(
+            Request::builder().body(crate::http::body::empty()).unwrap(),
+            client,
+            proxy,
+        );
+
+        let forwarded = request.into_forwarded();
+        let expected = format!("for={client};by={proxy};host={proxy}");
+
+        assert!(forwarded.headers().contains_key(header::FORWARDED));
+        assert_eq!(
+            forwarded
+                .headers()
+                .get(header::FORWARDED)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            expected.as_str()
+        );
+    }
+}
