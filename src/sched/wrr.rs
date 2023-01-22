@@ -47,3 +47,40 @@ impl Scheduler for WeightedRoundRobin {
         self.cycle.next_as_owned()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weighted_round_robin() {
+        let backends = vec![
+            ("127.0.0.1:8080", 1),
+            ("127.0.0.1:8081", 3),
+            ("127.0.0.1:8082", 2),
+        ];
+
+        let expected = vec![
+            "127.0.0.1:8080",
+            "127.0.0.1:8081",
+            "127.0.0.1:8081",
+            "127.0.0.1:8081",
+            "127.0.0.1:8082",
+            "127.0.0.1:8082",
+        ];
+
+        let wrr = WeightedRoundRobin::new(
+            &backends
+                .iter()
+                .map(|(addr, weight)| Backend {
+                    address: addr.parse().unwrap(),
+                    weight: *weight,
+                })
+                .collect(),
+        );
+
+        for server in expected {
+            assert_eq!(server, wrr.next_server().to_string());
+        }
+    }
+}
