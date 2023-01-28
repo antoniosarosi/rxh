@@ -2,6 +2,12 @@
 name = "rxh"
 version = "0.1.0"
 edition = "2021"
+license-file = "LICENSE"
+description = "HTTP reverse proxy & load balancer"
+repository = "https://github.com/antoniosarosi/rxh"
+readme = "README.md"
+keywords = ["reverse", "proxy", "http"]
+categories = ["web-programming::http-server", "network-programming"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
