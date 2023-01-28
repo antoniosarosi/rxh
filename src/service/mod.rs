@@ -25,8 +25,8 @@ use crate::{
 
 /// Implements [`Service`] and handles incoming requests.
 pub(crate) struct Rxh {
-    /// Reference to the configuration of this [`crate::server::Server`]
-    /// instance.
+    /// Reference to the configuration stored by [`crate::task::server::Server`]
+    /// instance running this services.
     config: &'static config::Server,
 
     // Socket address of the connected client.
