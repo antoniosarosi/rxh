@@ -11,6 +11,7 @@ use crate::http::response::{BoxBodyResponse, LocalResponse};
 pub(super) async fn transfer(path: &str, root: &str) -> Result<BoxBodyResponse, hyper::Error> {
     let path = std::path::Path::new(root).join(path);
 
+    // TODO: Windows extended length path: \\\\?\\C:\\Users\\user\\Directory
     if !path
         .canonicalize()
         .is_ok_and(|path| path.starts_with(root) && path.is_file())
