@@ -281,7 +281,7 @@ impl<'de> Visitor<'de> for ServerVisitor {
         let mut patterns: Vec<Pattern> = vec![];
         let mut simple_pattern: Option<Pattern> = None;
         let mut name = None;
-        let mut connections = super::default::max_connections();
+        let mut max_connections = super::default::max_connections();
         let mut uri = super::default::uri();
 
         while let Some(key) = map.next_key()? {
@@ -358,7 +358,7 @@ impl<'de> Visitor<'de> for ServerVisitor {
                     name = Some(map.next_value()?);
                 }
 
-                Field::Connections => connections = map.next_value()?,
+                Field::Connections => max_connections = map.next_value()?,
             }
         }
 
@@ -378,7 +378,7 @@ impl<'de> Visitor<'de> for ServerVisitor {
         Ok(Server {
             listen,
             patterns,
-            max_connections: connections,
+            max_connections,
             name,
             log_name: String::from("unnamed"),
         })
