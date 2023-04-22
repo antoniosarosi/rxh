@@ -6,8 +6,8 @@ pub mod proxy {
     use std::net::SocketAddr;
 
     use rxh::{
-        config::{Action, Algorithm, Backend, Forward, Pattern, Scheduler, Server},
-        sched::WeightedRoundRobin,
+        config::{Action, Algorithm, Backend, Forward, Pattern, Server},
+        sched,
     };
 
     /// Forwards all request to a single backend server.
@@ -32,7 +32,7 @@ pub mod proxy {
     /// Forwards requests to multiple backends using WRR for load balancing
     /// only when the request URI matches the given `uri`.
     pub fn multiple_weighted_backends_with_uri(backends: Vec<Backend>, uri: &str) -> Server {
-        let scheduler = Scheduler::Wrr(WeightedRoundRobin::new(&backends));
+        let scheduler = sched::make(Algorithm::Wrr, &backends);
 
         let forward = Forward {
             algorithm: Algorithm::Wrr,

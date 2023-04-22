@@ -6,9 +6,11 @@ mod wrr;
 
 pub use wrr::WeightedRoundRobin;
 
+use crate::config::{Algorithm, Backend};
+
 /// A scheduler provides an algorithm for load balancing between multiple
 /// backend servers.
-pub(crate) trait Scheduler {
+pub trait Scheduler {
     /// Returns the address of the server that should process the next request.
     fn next_server(&self) -> SocketAddr;
 
@@ -16,4 +18,11 @@ pub(crate) trait Scheduler {
     // useful for implementing load balancing algorithms such as "Least
     // Connections".
     // fn request_processed(server: SocketAddr);
+}
+
+/// [`Scheduler`] factory.
+pub fn make(algorithm: Algorithm, backends: &Vec<Backend>) -> Box<dyn Scheduler + Send + Sync> {
+    Box::new(match algorithm {
+        Algorithm::Wrr => WeightedRoundRobin::new(backends),
+    })
 }

@@ -9,7 +9,8 @@ use serde::{
     Serialize,
 };
 
-use super::{Action, Algorithm, Backend, Forward, Pattern, Scheduler, Server};
+use super::{Action, Algorithm, Backend, Forward, Pattern, Server};
+use crate::sched;
 
 /// See [`one_or_many`] for details.
 #[derive(Serialize, Deserialize, Debug)]
@@ -155,7 +156,7 @@ impl From<ForwardOption> for Forward {
             } => (backends, algorithm),
         };
 
-        let scheduler = Scheduler::from(algorithm, &backends);
+        let scheduler = sched::make(algorithm, &backends);
 
         Self {
             backends,

@@ -7,7 +7,7 @@ use std::{fmt::Debug, net::SocketAddr};
 use deser::{BackendOption, ForwardOption};
 use serde::{Deserialize, Serialize};
 
-use crate::sched::WeightedRoundRobin;
+use crate::sched::{self, Scheduler};
 
 /// This struct represents the entire configuration file, which describes a list
 /// of servers and their particular configuration options. For example, this
@@ -151,38 +151,6 @@ pub enum Algorithm {
     Wrr,
 }
 
-/// This is used mainly to avoid working with `dyn` traits. We don't know the
-/// exact scheduler type at compile time because it's specified in the config
-/// file and each server could have a different one (for now, there is only
-/// one, but hey, design for scaling). Instead of a `dyn` trait which causes
-/// issues because it has to be boxed as we don't know the size at compile time
-/// and it's not [`Send`] and [`Sync`], we'll store the scheduler inside an
-/// enum. We should look for another solution if we end up having many different
-/// schedulers, but this works for now.
-#[derive(Debug)]
-pub enum Scheduler {
-    Wrr(WeightedRoundRobin),
-}
-
-impl Scheduler {
-    /// Creates a new scheduler from the given [`Algorithm`].
-    pub fn from(algorithm: Algorithm, backends: &Vec<Backend>) -> Self {
-        match algorithm {
-            Algorithm::Wrr => Scheduler::Wrr(WeightedRoundRobin::new(backends)),
-        }
-    }
-
-    /// Convinience for accessing the underlying scheduler.
-    pub fn next_server(&self) -> SocketAddr {
-        let scheduler = match self {
-            Self::Wrr(wrr) => wrr,
-        };
-
-        use crate::sched::Scheduler;
-        scheduler.next_server()
-    }
-}
-
 /// Proxy specific configuration. This container is used to deserialize the
 /// config:
 ///
@@ -202,7 +170,7 @@ impl Scheduler {
 /// But it's probably not necessary as we could store all this information
 /// inside a [`Scheduler`]. We'll leave it here to match the config file and
 /// keep it symmetric.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 #[serde(from = "ForwardOption")]
 pub struct Forward {
     /// Upstream servers.
@@ -211,9 +179,18 @@ pub struct Forward {
     /// Algorithm used for load balancing.
     pub algorithm: Algorithm,
 
-    /// Scheduler wrapper to avoid using boxed `dyn` traits.
+    /// Load balancing scheduler.
     #[serde(skip)]
-    pub scheduler: Scheduler,
+    pub scheduler: Box<dyn Scheduler + Sync + Send>,
+}
+
+impl Debug for Forward {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Forward")
+            .field("backends", &self.backends)
+            .field("algorithm", &self.algorithm)
+            .finish()
+    }
 }
 
 impl Clone for Forward {
@@ -221,7 +198,7 @@ impl Clone for Forward {
         Self {
             backends: self.backends.clone(),
             algorithm: self.algorithm.clone(),
-            scheduler: Scheduler::from(self.algorithm, &self.backends),
+            scheduler: sched::make(self.algorithm, &self.backends),
         }
     }
 }
