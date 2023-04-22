@@ -69,8 +69,9 @@ pub struct Server {
     #[serde(rename = "match")]
     pub patterns: Vec<Pattern>,
 
-    #[serde(default = "default::connections")]
-    pub connections: usize,
+    /// Connections limit.
+    #[serde(default = "default::max_connections")]
+    pub max_connections: usize,
 
     /// Optional server name to show in logs and forwarded requests.
     pub name: Option<String>,
@@ -235,7 +236,7 @@ mod default {
         String::from("/")
     }
 
-    pub fn connections() -> usize {
+    pub fn max_connections() -> usize {
         1024
     }
 }

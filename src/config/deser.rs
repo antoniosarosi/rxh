@@ -281,7 +281,7 @@ impl<'de> Visitor<'de> for ServerVisitor {
         let mut patterns: Vec<Pattern> = vec![];
         let mut simple_pattern: Option<Pattern> = None;
         let mut name = None;
-        let mut connections = super::default::connections();
+        let mut connections = super::default::max_connections();
         let mut uri = super::default::uri();
 
         while let Some(key) = map.next_key()? {
@@ -378,7 +378,7 @@ impl<'de> Visitor<'de> for ServerVisitor {
         Ok(Server {
             listen,
             patterns,
-            connections,
+            max_connections: connections,
             name,
             log_name: String::from("unnamed"),
         })

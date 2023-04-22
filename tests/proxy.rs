@@ -182,7 +182,7 @@ async fn limited_connections() {
     let mut config = config::proxy::single_backend(server_addr);
 
     // Only two connections.
-    config.connections = 2;
+    config.max_connections = 2;
 
     let (proxy_addr, _, _shutdown, mut state) = spawn_reverse_proxy_with_controllers(config);
 

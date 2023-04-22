@@ -67,7 +67,7 @@ pub struct Server {
     shutdown: Pin<Box<dyn Future<Output = ()> + Send>>,
 
     /// Connections are limited to a maximum number. In order to allow a new
-    /// connection we'll have a acquire a permite from the semaphore.
+    /// connection we'll have a acquire a permit from the semaphore.
     connections: Arc<Semaphore>,
 }
 
@@ -135,7 +135,7 @@ impl Server {
         // the process.
         let shutdown = Box::pin(std::future::pending());
 
-        let connections = Arc::new(Semaphore::new(config.connections));
+        let connections = Arc::new(Semaphore::new(config.max_connections));
 
         Ok(Self {
             state,
@@ -287,10 +287,10 @@ impl<'a> Listener<'a> {
             if self.connections.available_permits() == 0 {
                 println!(
                     "{} => Reached max connections: {}",
-                    config.log_name, config.connections
+                    config.log_name, config.max_connections
                 );
                 self.state
-                    .send_replace(State::MaxConnectionsReached(config.connections));
+                    .send_replace(State::MaxConnectionsReached(config.max_connections));
                 notify_listening_again = true;
             }
 
