@@ -111,7 +111,7 @@ impl Server {
     /// For the `replica` parameter see [`super::master::Master`], but basically
     /// it's a number that indicates which address should this server choose for
     /// listening, since the config file allows multiple addresses.
-    pub fn init(config: config::Server, replica: usize) -> Result<Self, io::Error> {
+    fn init(config: config::Server, replica: usize) -> Result<Self, io::Error> {
         let (state, _) = watch::channel(State::Starting);
 
         let socket = if config.listen[replica].is_ipv4() {
@@ -146,6 +146,25 @@ impl Server {
             shutdown,
             connections,
         })
+    }
+
+    pub fn init_many(config: config::Server) -> Result<Vec<Self>, io::Error> {
+        let mut servers = Vec::new();
+
+        for replica in 0..config.listen.len() {
+            servers.push(Self::init(config.clone(), replica)?);
+        }
+
+        Ok(servers)
+    }
+
+    pub fn init_one(config: config::Server) -> Result<Self, io::Error> {
+        assert!(
+            config.listen.len() == 1,
+            "Server::init_one(config) called with multiple listening addresses"
+        );
+
+        Self::init(config, 0)
     }
 
     /// The [`Server`] will poll the given `future` and whenever it completes,

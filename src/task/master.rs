@@ -127,8 +127,7 @@ impl Master {
         let (shutdown_notify, _) = broadcast::channel(1);
 
         for server_config in config.servers {
-            for replica in 0..server_config.listen.len() {
-                let server = Server::init(server_config.clone(), replica)?;
+            for server in Server::init_many(server_config)? {
                 states.push((server.socket_address(), server.subscribe()));
                 servers.push(server);
             }
