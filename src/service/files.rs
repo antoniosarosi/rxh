@@ -1,5 +1,7 @@
 //! Static files server sub-service.
 
+use std::path::Path;
+
 use hyper::header;
 
 use crate::http::response::{BoxBodyResponse, LocalResponse};
@@ -9,32 +11,30 @@ use crate::http::response::{BoxBodyResponse, LocalResponse};
 /// and must be readable, otherwise a 404 response is returned. This function
 /// also assumes that `path` is relative, so it can't start with "/".
 pub(super) async fn transfer(path: &str, root: &str) -> Result<BoxBodyResponse, hyper::Error> {
-    let path = std::path::Path::new(root).join(path);
+    let Ok(directory) = Path::new(root).canonicalize() else {
+        return Ok(LocalResponse::not_found());
+    };
 
-    // TODO: Windows extended length path: \\\\?\\C:\\Users\\user\\Directory
-    if !path
-        .canonicalize()
-        .is_ok_and(|path| path.starts_with(root) && path.is_file())
-    {
+    let Ok(file) = directory.join(path).canonicalize() else {
+        return Ok(LocalResponse::not_found());
+    };
+
+    if !file.starts_with(directory) || !file.is_file() {
         return Ok(LocalResponse::not_found());
     }
 
-    let mut content_type = "text/plain";
-
-    if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-        content_type = match extension {
-            "html" => "text/html",
-            "css" => "text/css",
-            "js" => "application/javascript",
-            "png" => "image/png",
-            "jpeg" => "image/jpeg",
-            _ => "text/plain",
-        }
-    }
+    let content_type = match file.extension().and_then(|e| e.to_str()).unwrap_or("txt") {
+        "html" => "text/html",
+        "css" => "text/css",
+        "js" => "application/javascript",
+        "png" => "image/png",
+        "jpeg" => "image/jpeg",
+        _ => "text/plain",
+    };
 
     // TODO: gzip medium files, stream large files and set
     // Transfer-Encoding: chunked.
-    match tokio::fs::read(path).await {
+    match tokio::fs::read(file).await {
         Ok(content) => Ok(LocalResponse::builder()
             .header(header::CONTENT_TYPE, content_type)
             .body(crate::http::body::full(content))
