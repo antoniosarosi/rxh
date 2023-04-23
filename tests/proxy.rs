@@ -343,7 +343,7 @@ async fn multi_server() {
         Ok(Response::new(Full::<Bytes>::from("Hello World Response")))
     }));
 
-    let config = rxh::config::Config {
+    let config = rxh::config::NormalizedConfig {
         servers: vec![
             config::proxy::single_backend_with_uri(server_addr, "/api"),
             config::files::serve(dir.path().to_str().unwrap()),

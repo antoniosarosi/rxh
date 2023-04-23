@@ -41,9 +41,9 @@ pub mod proxy {
         };
 
         Server {
+            listen: "127.0.0.1:0".parse().unwrap(),
             name: None,
             log_name: String::from("unnamed"),
-            listen: vec!["127.0.0.1:0".parse().unwrap()],
             max_connections: 1024,
             patterns: vec![Pattern {
                 uri: String::from(uri),
@@ -66,9 +66,9 @@ pub mod files {
     /// Serves files from `root` if the request URI matchees `uri`.
     pub fn serve_at_uri(root: &str, uri: &str) -> Server {
         Server {
+            listen: "127.0.0.1:0".parse().unwrap(),
             name: None,
             log_name: String::from("unnamed"),
-            listen: vec!["127.0.0.1:0".parse().unwrap()],
             max_connections: 1024,
             patterns: vec![Pattern {
                 uri: String::from(uri),

@@ -6,7 +6,7 @@ use std::{
 
 use tokio::sync::{broadcast, watch};
 
-use crate::{config::Config, Server, State};
+use crate::{config::NormalizedConfig, Server, State};
 
 /// The master task is responsible for creating, spawning and shutting down all
 /// the [`Server`] instances described in the configuration file. Both spawning
@@ -120,17 +120,16 @@ impl Master {
     /// file or in the received `config`. The initialization only acquires and
     /// configures the TCP sockets, but does not listen or accept connections.
     /// See [`Server::init`] for more details.
-    pub fn init(config: Config) -> Result<Self, crate::Error> {
+    pub fn init(config: NormalizedConfig) -> Result<Self, crate::Error> {
         let mut servers = Vec::new();
         let mut states = Vec::new();
         let shutdown = Box::pin(future::pending());
         let (shutdown_notify, _) = broadcast::channel(1);
 
-        for server_config in config.servers {
-            for server in Server::init_many(server_config)? {
-                states.push((server.socket_address(), server.subscribe()));
-                servers.push(server);
-            }
+        for config in config.servers {
+            let server = Server::init(config)?;
+            states.push((server.socket_address(), server.subscribe()));
+            servers.push(server);
         }
 
         Ok(Self {

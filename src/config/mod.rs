@@ -16,7 +16,7 @@ use crate::sched::{self, Scheduler};
 /// ```toml
 /// [[server]]
 ///
-/// listen = "127.0.0.1:8000"
+/// listen = ["127.0.0.1:7000", "127.0.0.1:8000"]
 /// forward = "127.0.0.1:8080"
 ///
 /// [[server]]
@@ -25,32 +25,78 @@ use crate::sched::{self, Scheduler};
 /// serve = "/home/user/website"
 /// ```
 ///
-/// Should result in a [`Vec`] containing two [`Server`] elements after
+/// Should result in a [`Vec`] containing two [`MultiServer`] elements after
 /// deserializing.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     /// List of all servers.
     #[serde(rename = "server")]
+    pub servers: Vec<MultiServer>,
+}
+
+impl Config {
+    /// Consumes `self` returning an instance of [`NormalizedConfig`].
+    pub fn into_normalized(self) -> NormalizedConfig {
+        let servers = self
+            .servers
+            .iter()
+            .flat_map(|server| server.split())
+            .collect();
+
+        NormalizedConfig { servers }
+    }
+}
+
+/// The configuration file allows a server to listen on multiple addresses.
+/// However, in terms of programming, it is easier to reason about multiple
+/// servers each listening on one address only. The idea is turning this:
+///
+/// ```toml
+/// [[server]]
+/// listen = ["127.0.0.1:7000", "127.0.0.1:8000"]
+/// forward = "127.0.0.1:8080"
+/// ```
+///
+/// into this:
+///
+/// ```toml
+/// [[server]]
+/// listen = "127.0.0.1:7000"
+/// forward = "127.0.0.1:8080"
+///
+/// [[server]]
+/// listen = "127.0.0.1:8000"
+/// forward = "127.0.0.1:8080"
+/// ```
+///
+/// By doing so graceful shutdown becomes easier since we only have to send the
+/// shutdown signal to each server instance. If we allowed each server to manage
+/// multiple listeners itself, then the server would have to forward the
+/// shutdown signal to its listeners, adding another lever of indirection. See
+/// [`crate::task::master::Master`] for more details.
+pub struct NormalizedConfig {
+    /// List of normalized server instances (one address only).
     pub servers: Vec<Server>,
 }
 
-/// Description of a single server instance in the config file. The server
-/// allows a "simple" pattern or multiple patterns. For example:
+/// Description of a single server instance in the config file. The server can
+/// have multiple listening addresses and allows a "simple" pattern or multiple
+/// patterns. For example:
 ///
 /// ```toml
-/// # Simple pattern.
+/// # Simple pattern, multiple addresses.
 ///
 /// [[server]]
 ///
-/// listen = "127.0.0.1:8000"
+/// listen = ["127.0.0.1:7000", "127.0.0.1:8000"]
 /// forward = "127.0.0.1:9000"
 /// uri = "/api"
 ///
-/// # Multiple patterns using "match".
+/// # Multiple patterns using "match", single address.
 ///
 /// [[server]]
 ///
-/// listen = "128.0.01:8001"
+/// listen = "128.0.01:6000"
 ///
 /// match = [
 ///     { uri = "/front", serve = "/home/website" },
@@ -61,9 +107,43 @@ pub struct Config {
 /// This is not provided by [`serde`], see [`deser`] module for implementation
 /// details.
 #[derive(Serialize, Debug, Clone)]
-pub struct Server {
+pub struct MultiServer {
     /// Socket addresses where this server listens.
     pub listen: Vec<SocketAddr>,
+
+    /// Rest of server configuration. The `listen` field in [`Server`] should
+    /// have a temporary value like `127.0.0.1:0` while it is stored here.
+    #[serde(flatten)]
+    pub shared: Server,
+}
+
+impl MultiServer {
+    /// Creates an instance of [`Self`] with the given addresses and options.
+    pub fn new(listen: Vec<SocketAddr>, shared: Server) -> Self {
+        Self { listen, shared }
+    }
+
+    /// Turns this [`MultiServer`] into multiple normalized servers (one
+    /// listening address only).
+    pub fn split(&self) -> Vec<Server> {
+        self.listen
+            .iter()
+            .map(|address| Server {
+                listen: *address,
+                ..self.shared.clone()
+            })
+            .collect()
+    }
+}
+
+/// Normalized server configuration used at runtime. Everything from the config
+/// file is present here except that there's only one listening address. See
+/// [`NormalizedConfig`].
+#[derive(Serialize, Debug, Clone)]
+pub struct Server {
+    /// TCP address to listen on.
+    #[serde(skip)]
+    pub listen: SocketAddr,
 
     /// Patterns that this server should match against.
     #[serde(rename = "match")]

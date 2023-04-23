@@ -9,7 +9,7 @@ use serde::{
     Serialize,
 };
 
-use super::{Action, Algorithm, Backend, Forward, Pattern, Server};
+use super::{Action, Algorithm, Backend, Forward, MultiServer, Pattern, Server};
 use crate::sched;
 
 /// See [`one_or_many`] for details.
@@ -166,7 +166,7 @@ impl From<ForwardOption> for Forward {
     }
 }
 
-impl<'de> Deserialize<'de> for Server {
+impl<'de> Deserialize<'de> for MultiServer {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -267,7 +267,7 @@ impl std::fmt::Display for Error {
 }
 
 impl<'de> Visitor<'de> for ServerVisitor {
-    type Value = Server;
+    type Value = MultiServer;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str("at least 'listen' and 'forward' or 'serve' fields")
@@ -375,12 +375,12 @@ impl<'de> Visitor<'de> for ServerVisitor {
             return Err(de::Error::missing_field("listen"));
         }
 
-        Ok(Server {
-            listen,
+        Ok(MultiServer::new(listen, Server {
+            listen: "127.0.0.1:0".parse().unwrap(),
             patterns,
             max_connections,
             name,
             log_name: String::from("unnamed"),
-        })
+        }))
     }
 }

@@ -107,14 +107,10 @@ impl Server {
     /// `await`ed. We do it this way because we use the port 0 for integration
     /// tests, which allows the OS to pick any available port, but we still want
     /// to know which port the server is using.
-    ///
-    /// For the `replica` parameter see [`super::master::Master`], but basically
-    /// it's a number that indicates which address should this server choose for
-    /// listening, since the config file allows multiple addresses.
-    fn init(config: config::Server, replica: usize) -> Result<Self, io::Error> {
+    pub fn init(config: config::Server) -> Result<Self, io::Error> {
         let (state, _) = watch::channel(State::Starting);
 
-        let socket = if config.listen[replica].is_ipv4() {
+        let socket = if config.listen.is_ipv4() {
             TcpSocket::new_v4()?
         } else {
             TcpSocket::new_v6()?
@@ -123,10 +119,12 @@ impl Server {
         #[cfg(not(windows))]
         socket.set_reuseaddr(true)?;
 
-        socket.bind(config.listen[replica])?;
+        socket.bind(config.listen)?;
 
         // TODO: Hardcoded backlog, maybe this should be configurable.
         let listener = socket.listen(1024)?;
+
+        // If the TCP port is 0 then the OS will choose a valid one.
         let address = listener.local_addr().unwrap();
 
         let notifier = Notifier::new();
@@ -146,25 +144,6 @@ impl Server {
             shutdown,
             connections,
         })
-    }
-
-    pub fn init_many(config: config::Server) -> Result<Vec<Self>, io::Error> {
-        let mut servers = Vec::new();
-
-        for replica in 0..config.listen.len() {
-            servers.push(Self::init(config.clone(), replica)?);
-        }
-
-        Ok(servers)
-    }
-
-    pub fn init_one(config: config::Server) -> Result<Self, io::Error> {
-        assert!(
-            config.listen.len() == 1,
-            "Server::init_one(config) called with multiple listening addresses"
-        );
-
-        Self::init(config, 0)
     }
 
     /// The [`Server`] will poll the given `future` and whenever it completes,
