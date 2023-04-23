@@ -381,6 +381,7 @@ impl<'de> Visitor<'de> for ServerVisitor {
             max_connections,
             name,
             log_name: String::from("unnamed"),
+            replica: 0,
         })
     }
 }

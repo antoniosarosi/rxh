@@ -16,7 +16,7 @@ use crate::sched::{self, Scheduler};
 /// ```toml
 /// [[server]]
 ///
-/// listen = "127.0.0.1:8000"
+/// listen = ["127.0.0.1:7000", "127.0.0.1:8000"]
 /// forward = "127.0.0.1:8080"
 ///
 /// [[server]]
@@ -26,7 +26,9 @@ use crate::sched::{self, Scheduler};
 /// ```
 ///
 /// Should result in a [`Vec`] containing two [`Server`] elements after
-/// deserializing.
+/// deserializing. Further processing is necessary to account for server
+/// instances with multiple listening addresses. See [`Server`] and
+/// [`crate::task::master`].
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     /// List of all servers.
@@ -34,23 +36,36 @@ pub struct Config {
     pub servers: Vec<Server>,
 }
 
-/// Description of a single server instance in the config file. The server
-/// allows a "simple" pattern or multiple patterns. For example:
+impl Config {
+    pub fn replicate_servers(self) -> Self {
+        let servers = self
+            .servers
+            .iter()
+            .flat_map(|server| server.replicate())
+            .collect();
+
+        Self { servers }
+    }
+}
+
+/// Description of a single server instance in the config file. The server can
+/// have multiple listening addresses and allows a "simple" pattern or multiple
+/// patterns. For example:
 ///
 /// ```toml
-/// # Simple pattern.
+/// # Simple pattern, multiple addresses.
 ///
 /// [[server]]
 ///
-/// listen = "127.0.0.1:8000"
+/// listen = ["127.0.0.1:7000", "127.0.0.1:8000"]
 /// forward = "127.0.0.1:9000"
 /// uri = "/api"
 ///
-/// # Multiple patterns using "match".
+/// # Multiple patterns using "match", single address.
 ///
 /// [[server]]
 ///
-/// listen = "128.0.01:8001"
+/// listen = "128.0.01:6000"
 ///
 /// match = [
 ///     { uri = "/front", serve = "/home/website" },
@@ -58,12 +73,79 @@ pub struct Config {
 /// ]
 /// ```
 ///
-/// This is not provided by [`serde`], see [`deser`] module for implementation
-/// details.
+/// Deserialization of this syntax is not provided by [`serde`], see [`deser`]
+/// module for implementation details.
+///
+/// # Multiple Listening Addresses
+///
+/// The configuration file allows a server to listen on multiple addresses.
+/// However, in terms of programming, it is easier to reason about multiple
+/// servers each listening on one address only. The idea is turning this:
+///
+/// ```toml
+/// [[server]]
+/// listen = ["127.0.0.1:7000", "127.0.0.1:8000"]
+/// forward = "127.0.0.1:8080"
+/// ```
+///
+/// into this something like this:
+///
+/// ```toml
+/// [[server]]
+/// listen = "127.0.0.1:7000"
+/// forward = "127.0.0.1:8080"
+///
+/// [[server]]
+/// listen = "127.0.0.1:8000"
+/// forward = "127.0.0.1:8080"
+/// ```
+///
+/// By doing so, graceful shutdown becomes easier since we only have to send the
+/// shutdown signal once to each server. On the other hand, if we allowed each
+/// server to manage multiple listeners itself, then the server would have to
+/// forward the shutdown signal to all its listeners, adding another lever of
+/// indirection. See [`crate::task::master::Master`] for more details about
+/// signals.
+///
+/// # Replicas
+///
+/// In order to match the config file (multiple addresses per server) with the
+/// concept of having multiple servers listening on one address only, we just
+/// "replicate" the server as many times as needed. Each replica stores an array
+/// of all the listening addresses and also a *replica number* or ID, which is
+/// basically a valid index in the addresses array. Note that this is only
+/// needed at runtime, the user doesn't need to think about replicas. The user
+/// would write this in the config file:
+///
+/// ```toml
+/// [[server]]
+/// listen = ["127.0.0.1:7000", "127.0.0.1:8000"]
+/// forward = "127.0.0.1:8080"
+/// ```
+///
+/// And we turn it into this at runtime:
+///
+/// ```toml
+/// [[server]]
+/// listen = ["127.0.0.1:7000", "127.0.0.1:8000"]
+/// forward = "127.0.0.1:8080"
+/// replica = 0 # listen[0] is the address of this replica.
+///
+/// [[server]]
+/// listen = ["127.0.0.1:7000", "127.0.0.1:8000"]
+/// forward = "127.0.0.1:8080"
+/// replica = 1 # listen[1] is the address of this replica.
+/// ```
+///
+/// This also allows each replica to know its peers addresses, or the amount of
+/// replicas available.
 #[derive(Serialize, Debug, Clone)]
 pub struct Server {
     /// Socket addresses where this server listens.
     pub listen: Vec<SocketAddr>,
+
+    /// Replica number. Must be in the range `0..self.listen.len()`.
+    pub replica: usize,
 
     /// Patterns that this server should match against.
     #[serde(rename = "match")]
@@ -80,6 +162,21 @@ pub struct Server {
     /// optional name set by the user.
     #[serde(skip)]
     pub log_name: String,
+}
+
+impl Server {
+    pub fn replicate(&self) -> Vec<Self> {
+        let mut replicas = Vec::new();
+
+        for replica in 0..self.listen.len() {
+            replicas.push(Self {
+                replica,
+                ..self.clone()
+            })
+        }
+
+        replicas
+    }
 }
 
 /// This is a single element of a `match` list in the configuration of a server.
