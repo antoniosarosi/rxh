@@ -126,12 +126,10 @@ impl Master {
         let shutdown = Box::pin(future::pending());
         let (shutdown_notify, _) = broadcast::channel(1);
 
-        for server_config in config.servers {
-            for replica in 0..server_config.listen.len() {
-                let server = Server::init(server_config.clone(), replica)?;
-                states.push((server.socket_address(), server.subscribe()));
-                servers.push(server);
-            }
+        for replica in config.servers.iter().flat_map(|server| server.replicate()) {
+            let server = Server::init(replica)?;
+            states.push((server.socket_address(), server.subscribe()));
+            servers.push(server);
         }
 
         Ok(Self {

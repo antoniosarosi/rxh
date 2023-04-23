@@ -36,18 +36,6 @@ pub struct Config {
     pub servers: Vec<Server>,
 }
 
-impl Config {
-    pub fn replicate_servers(self) -> Self {
-        let servers = self
-            .servers
-            .iter()
-            .flat_map(|server| server.replicate())
-            .collect();
-
-        Self { servers }
-    }
-}
-
 /// Description of a single server instance in the config file. The server can
 /// have multiple listening addresses and allows a "simple" pattern or multiple
 /// patterns. For example:

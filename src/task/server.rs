@@ -111,10 +111,10 @@ impl Server {
     /// For the `replica` parameter see [`super::master::Master`], but basically
     /// it's a number that indicates which address should this server choose for
     /// listening, since the config file allows multiple addresses.
-    pub fn init(config: config::Server, replica: usize) -> Result<Self, io::Error> {
+    pub fn init(config: config::Server) -> Result<Self, io::Error> {
         let (state, _) = watch::channel(State::Starting);
 
-        let socket = if config.listen[replica].is_ipv4() {
+        let socket = if config.listen[config.replica].is_ipv4() {
             TcpSocket::new_v4()?
         } else {
             TcpSocket::new_v6()?
@@ -123,7 +123,7 @@ impl Server {
         #[cfg(not(windows))]
         socket.set_reuseaddr(true)?;
 
-        socket.bind(config.listen[replica])?;
+        socket.bind(config.listen[config.replica])?;
 
         // TODO: Hardcoded backlog, maybe this should be configurable.
         let listener = socket.listen(1024)?;
